@@ -1,0 +1,23 @@
+name = "echo-booking"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[triggers]
+crons = ["0 6 * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "echo-booking"
+database_id = "dc72a1ee-29b6-4292-97a0-af9c9ac26aa5"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "05bec61c60914980bde6545bd27c1a95"
+
+[[services]]
+binding = "ENGINE_RUNTIME"
+service = "echo-engine-runtime"
+
+[[services]]
+binding = "SHARED_BRAIN"
+service = "echo-shared-brain"
