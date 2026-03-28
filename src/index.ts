@@ -480,6 +480,18 @@ async function logAct(db: D1Database, t: string, et: string, eid: string, action
   await db.prepare('INSERT INTO activity_log (id,tenant_id,entity_type,entity_id,action,details) VALUES (?,?,?,?,?,?)').bind(uid(), t, et, eid, action, details).run();
 }
 
+app.onError((err, c) => {
+  if (err.message?.includes('JSON')) {
+    return c.json({ error: 'Invalid JSON body' }, 400);
+  }
+  console.error(`[echo-booking] ${err.message}`);
+  return c.json({ error: 'Internal server error' }, 500);
+});
+
+app.notFound((c) => {
+  return c.json({ error: 'Not found' }, 404);
+});
+
 export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
