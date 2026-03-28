@@ -718,7 +718,11 @@ function addMinutes(time: string, mins: number): string {
   return `${String(Math.floor(total/60)).padStart(2,'0')}:${String(total%60).padStart(2,'0')}`;
 }
 async function logAct(db: D1Database, t: string, et: string, eid: string, action: string, details: string) {
-  await db.prepare('INSERT INTO activity_log (id,tenant_id,entity_type,entity_id,action,details) VALUES (?,?,?,?,?,?)').bind(uid(), t, et, eid, action, details).run();
+  try {
+    await db.prepare('INSERT INTO activity_log (id,tenant_id,entity_type,entity_id,action,details) VALUES (?,?,?,?,?,?)').bind(uid(), t, et, eid, action, details).run();
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'logAct', error: e?.message }));
+  }
 }
 
 app.onError((err, c) => {
@@ -736,27 +740,31 @@ app.notFound((c) => {
 export default {
   fetch: app.fetch,
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    const results: string[] = [];
-    const noShows = await env.DB.prepare("UPDATE appointments SET status='no_show',no_show_at=datetime('now') WHERE status='confirmed' AND date<date('now')").run();
-    results.push(`No-shows: ${noShows.meta.changes}`);
-    const recs = await env.DB.prepare("SELECT * FROM recurring_schedules WHERE status='active'").all();
-    for (const rec of recs.results as any[]) {
-      const svc = await env.DB.prepare('SELECT duration_minutes FROM services WHERE id=?').bind(rec.service_id).first() as any;
-      const endTime = addMinutes(rec.start_time, svc?.duration_minutes||60);
-      for (let d = 0; d < 14; d++) {
-        const dt = new Date(Date.now()+d*86400000);
-        if (dt.getDay() !== rec.day_of_week) continue;
-        const ds = dt.toISOString().split('T')[0];
-        if (ds < rec.start_date || (rec.end_date && ds > rec.end_date)) continue;
-        // Duplicate protection: check by recurring_id + date (simpler, faster)
-        const exists = await env.DB.prepare(
-          "SELECT id FROM appointments WHERE recurring_id = ? AND date = ?"
-        ).bind(rec.id, ds).first();
-        if (exists) continue;
-        await env.DB.prepare("INSERT INTO appointments (id,tenant_id,customer_id,staff_id,service_id,location_id,status,start_time,end_time,date,is_recurring,recurring_id,source) VALUES (?,?,?,?,?,?,'confirmed',?,?,?,1,?,'recurring')")
-          .bind(uid(), rec.tenant_id, rec.customer_id, rec.staff_id, rec.service_id, rec.location_id||null, rec.start_time, endTime, ds, rec.id).run();
+    try {
+      const results: string[] = [];
+      const noShows = await env.DB.prepare("UPDATE appointments SET status='no_show',no_show_at=datetime('now') WHERE status='confirmed' AND date<date('now')").run();
+      results.push(`No-shows: ${noShows.meta.changes}`);
+      const recs = await env.DB.prepare("SELECT * FROM recurring_schedules WHERE status='active'").all();
+      for (const rec of recs.results as any[]) {
+        const svc = await env.DB.prepare('SELECT duration_minutes FROM services WHERE id=?').bind(rec.service_id).first() as any;
+        const endTime = addMinutes(rec.start_time, svc?.duration_minutes||60);
+        for (let d = 0; d < 14; d++) {
+          const dt = new Date(Date.now()+d*86400000);
+          if (dt.getDay() !== rec.day_of_week) continue;
+          const ds = dt.toISOString().split('T')[0];
+          if (ds < rec.start_date || (rec.end_date && ds > rec.end_date)) continue;
+          // Duplicate protection: check by recurring_id + date (simpler, faster)
+          const exists = await env.DB.prepare(
+            "SELECT id FROM appointments WHERE recurring_id = ? AND date = ?"
+          ).bind(rec.id, ds).first();
+          if (exists) continue;
+          await env.DB.prepare("INSERT INTO appointments (id,tenant_id,customer_id,staff_id,service_id,location_id,status,start_time,end_time,date,is_recurring,recurring_id,source) VALUES (?,?,?,?,?,?,'confirmed',?,?,?,1,?,'recurring')")
+            .bind(uid(), rec.tenant_id, rec.customer_id, rec.staff_id, rec.service_id, rec.location_id||null, rec.start_time, endTime, ds, rec.id).run();
+        }
       }
+      console.log(JSON.stringify({ event: 'cron', results }));
+    } catch (e: any) {
+      console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'scheduled', error: e?.message }));
     }
-    console.log(JSON.stringify({ event: 'cron', results }));
   },
 };
