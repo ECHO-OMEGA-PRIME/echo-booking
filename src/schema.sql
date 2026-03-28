@@ -1,5 +1,5 @@
--- Echo Booking v1.0.0 Schema
--- AI-powered appointment scheduling system
+-- Echo Booking v2.0.0 Schema
+-- AI-powered appointment scheduling system with Stripe payments
 
 CREATE TABLE IF NOT EXISTS tenants (
   id TEXT PRIMARY KEY,
@@ -146,6 +146,10 @@ CREATE TABLE IF NOT EXISTS appointments (
   recurring_id TEXT,
   reminder_sent INTEGER DEFAULT 0,
   source TEXT DEFAULT 'manual',
+  payment_status TEXT DEFAULT 'none',
+  stripe_checkout_id TEXT,
+  stripe_payment_id TEXT,
+  paid_at TEXT,
   cancellation_reason TEXT,
   cancelled_at TEXT,
   no_show_at TEXT,
@@ -162,6 +166,8 @@ CREATE INDEX IF NOT EXISTS idx_appt_date ON appointments(tenant_id, date);
 CREATE INDEX IF NOT EXISTS idx_appt_staff ON appointments(tenant_id, staff_id, date);
 CREATE INDEX IF NOT EXISTS idx_appt_customer ON appointments(tenant_id, customer_id);
 CREATE INDEX IF NOT EXISTS idx_appt_status ON appointments(tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_appt_payment ON appointments(payment_status);
+CREATE INDEX IF NOT EXISTS idx_appt_stripe ON appointments(stripe_checkout_id);
 
 CREATE TABLE IF NOT EXISTS recurring_schedules (
   id TEXT PRIMARY KEY,

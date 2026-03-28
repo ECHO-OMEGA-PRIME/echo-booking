@@ -1,11 +1,11 @@
 /**
- * Echo Booking v1.1.0 — AI-Powered Appointment Scheduling
+ * Echo Booking v2.0.0 — AI-Powered Appointment Scheduling + Stripe Payments
  * Cloudflare Worker with Hono, D1, KV, service bindings
  */
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
-interface Env { DB: D1Database; CACHE: KVNamespace; ENGINE_RUNTIME: Fetcher; SHARED_BRAIN: Fetcher; EMAIL_SENDER: Fetcher; ECHO_API_KEY?: string; }
+interface Env { DB: D1Database; CACHE: KVNamespace; ENGINE_RUNTIME: Fetcher; SHARED_BRAIN: Fetcher; EMAIL_SENDER: Fetcher; ECHO_API_KEY?: string; STRIPE_SECRET_KEY?: string; STRIPE_WEBHOOK_SECRET?: string; BOOKING_HMAC_KEY?: string; }
 interface RLState { c: number; t: number }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -49,7 +49,7 @@ async function sendEmail(env: Env, to: string, subject: string, html: string): P
 }
 
 function slog(level: 'info' | 'warn' | 'error', msg: string, data?: Record<string, unknown>) {
-  const entry = { ts: new Date().toISOString(), level, worker: 'echo-booking', version: '1.1.0', msg, ...data };
+  const entry = { ts: new Date().toISOString(), level, worker: 'echo-booking', version: '2.0.0', msg, ...data };
   if (level === 'error') console.error(JSON.stringify(entry));
   else console.log(JSON.stringify(entry));
 }
@@ -80,7 +80,7 @@ app.use('*', async (c, next) => {
 app.use('*', async (c, next) => {
   const method = c.req.method;
   const path = new URL(c.req.url).pathname;
-  if (method === 'GET' || method === 'OPTIONS' || method === 'HEAD' || path === '/health' || path === '/status' || path.startsWith('/public/')) return next();
+  if (method === 'GET' || method === 'OPTIONS' || method === 'HEAD' || path === '/health' || path === '/status' || path.startsWith('/public/') || path.startsWith('/webhooks/')) return next();
   const apiKey = c.req.header('X-Echo-API-Key') || '';
   const bearer = (c.req.header('Authorization') || '').replace('Bearer ', '');
   const expected = c.env.ECHO_API_KEY;
@@ -90,8 +90,8 @@ app.use('*', async (c, next) => {
   return next();
 });
 
-app.get('/', (c) => c.json({ service: 'echo-booking', version: '1.0.0', status: 'operational' }));
-app.get('/health', (c) => json({ status: 'ok', service: 'echo-booking', version: '1.1.0', time: new Date().toISOString() }));
+app.get('/', (c) => c.json({ service: 'echo-booking', version: '2.0.0', status: 'operational' }));
+app.get('/health', (c) => json({ status: 'ok', service: 'echo-booking', version: '2.0.0', time: new Date().toISOString(), stripe: !!c.env.STRIPE_SECRET_KEY, payments: !!c.env.STRIPE_SECRET_KEY }));
 
 // ═══════════════ TENANTS ═══════════════
 app.post('/tenants', async (c) => {
@@ -521,6 +521,279 @@ app.post('/appointments/:id/reschedule', async (c) => {
   } catch (e: any) {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /appointments/:id/reschedule', error: e?.message }));
     return c.json({ error: 'Database error' }, 500);
+  }
+});
+
+// ═══════════════ STRIPE PAYMENTS ═══════════════
+
+// HMAC-SHA256 helpers
+async function hmacSign(key: string, data: string): Promise<string> {
+  const enc = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey('raw', enc.encode(key), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, enc.encode(data));
+  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hmacVerify(key: string, data: string, signature: string): Promise<boolean> {
+  const expected = await hmacSign(key, data);
+  if (expected.length !== signature.length) return false;
+  let result = 0;
+  for (let i = 0; i < expected.length; i++) result |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+  return result === 0;
+}
+
+function generateBookingToken(hmacKey: string, appointmentId: string): Promise<string> {
+  return hmacSign(hmacKey, `booking:${appointmentId}`);
+}
+
+// POST /appointments/:id/checkout — Create Stripe Checkout session
+app.post('/appointments/:id/checkout', async (c) => {
+  try {
+    if (!c.env.STRIPE_SECRET_KEY) return json({ error: 'Stripe not configured' }, 503);
+    const t = tid(c); const apptId = c.req.param('id');
+    const appt = await c.env.DB.prepare(
+      'SELECT a.*, s.name as service_name, cu.name as customer_name, cu.email as customer_email FROM appointments a LEFT JOIN services s ON a.service_id=s.id LEFT JOIN customers cu ON a.customer_id=cu.id WHERE a.id=? AND a.tenant_id=?'
+    ).bind(apptId, t).first<any>();
+    if (!appt) return json({ error: 'Appointment not found' }, 404);
+    if (appt.payment_status === 'paid') return json({ error: 'Already paid' }, 400);
+    const amount = Math.round((appt.price || 0) * 100);
+    if (amount <= 0) return json({ error: 'No amount to charge' }, 400);
+
+    const body = await c.req.json().catch(() => ({})) as { success_url?: string; cancel_url?: string };
+    const successUrl = body.success_url || `https://echo-booking.bmcii1976.workers.dev/public/booking/${apptId}/success`;
+    const cancelUrl = body.cancel_url || `https://echo-booking.bmcii1976.workers.dev/public/booking/${apptId}/cancel`;
+
+    const params = new URLSearchParams();
+    params.append('mode', 'payment');
+    params.append('payment_method_types[0]', 'card');
+    params.append('line_items[0][price_data][currency]', (appt.currency || 'usd').toLowerCase());
+    params.append('line_items[0][price_data][unit_amount]', String(amount));
+    params.append('line_items[0][price_data][product_data][name]', appt.service_name || 'Appointment');
+    params.append('line_items[0][price_data][product_data][description]', `Booking on ${appt.date} at ${appt.start_time}`);
+    params.append('line_items[0][quantity]', '1');
+    params.append('success_url', successUrl);
+    params.append('cancel_url', cancelUrl);
+    params.append('client_reference_id', apptId);
+    if (appt.customer_email) params.append('customer_email', appt.customer_email);
+    params.append('metadata[appointment_id]', apptId);
+    params.append('metadata[tenant_id]', t);
+
+    const stripeResp = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params.toString(),
+    });
+    const session = await stripeResp.json() as any;
+    if (!stripeResp.ok) {
+      slog('error', 'Stripe checkout creation failed', { status: stripeResp.status, error: session.error?.message });
+      return json({ error: 'Stripe error', detail: session.error?.message }, 502);
+    }
+
+    await c.env.DB.prepare("UPDATE appointments SET stripe_checkout_id=?, payment_status='pending', updated_at=datetime('now') WHERE id=?")
+      .bind(session.id, apptId).run();
+    await logAct(c.env.DB, t, 'appointment', apptId, 'checkout_created', `Stripe checkout ${session.id}`);
+    slog('info', 'Stripe checkout created', { appointment_id: apptId, session_id: session.id, amount });
+
+    return json({ checkout_url: session.url, session_id: session.id });
+  } catch (e: any) {
+    slog('error', 'Checkout endpoint failed', { error: e?.message });
+    return json({ error: 'Internal error' }, 500);
+  }
+});
+
+// POST /appointments/:id/payment-link — Generate shareable payment link with HMAC token
+app.post('/appointments/:id/payment-link', async (c) => {
+  try {
+    if (!c.env.BOOKING_HMAC_KEY) return json({ error: 'HMAC key not configured' }, 503);
+    const t = tid(c); const apptId = c.req.param('id');
+    const appt = await c.env.DB.prepare('SELECT id, price, payment_status FROM appointments WHERE id=? AND tenant_id=?').bind(apptId, t).first<any>();
+    if (!appt) return json({ error: 'Appointment not found' }, 404);
+    if (appt.payment_status === 'paid') return json({ error: 'Already paid' }, 400);
+    const amount = Math.round((appt.price || 0) * 100);
+    if (amount <= 0) return json({ error: 'No amount to charge' }, 400);
+
+    const token = await generateBookingToken(c.env.BOOKING_HMAC_KEY, apptId);
+    const link = `https://echo-booking.bmcii1976.workers.dev/public/booking/${apptId}?token=${token}`;
+    slog('info', 'Payment link generated', { appointment_id: apptId });
+    return json({ payment_link: link, token });
+  } catch (e: any) {
+    slog('error', 'Payment link generation failed', { error: e?.message });
+    return json({ error: 'Internal error' }, 500);
+  }
+});
+
+// GET /public/booking/:id — Public appointment confirmation page (HMAC token required)
+app.get('/public/booking/:id', async (c) => {
+  try {
+    const apptId = c.req.param('id');
+    const token = c.req.query('token');
+    if (!token || !c.env.BOOKING_HMAC_KEY) return json({ error: 'Invalid or missing token' }, 403);
+
+    const valid = await hmacVerify(c.env.BOOKING_HMAC_KEY, `booking:${apptId}`, token);
+    if (!valid) return json({ error: 'Invalid token' }, 403);
+
+    const appt = await c.env.DB.prepare(
+      'SELECT a.id, a.date, a.start_time, a.end_time, a.price, a.status, a.payment_status, a.stripe_checkout_id, s.name as service_name, s.currency, st.name as staff_name, cu.name as customer_name FROM appointments a LEFT JOIN services s ON a.service_id=s.id LEFT JOIN staff st ON a.staff_id=st.id LEFT JOIN customers cu ON a.customer_id=cu.id WHERE a.id=?'
+    ).bind(apptId).first<any>();
+    if (!appt) return json({ error: 'Appointment not found' }, 404);
+
+    const amount = ((appt.price || 0)).toFixed(2);
+    const isPaid = appt.payment_status === 'paid';
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Booking Confirmation</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;background:#f8fafc;color:#1e293b;display:flex;justify-content:center;padding:2rem}
+.card{background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.08);max-width:480px;width:100%;padding:2rem}
+h1{font-size:1.5rem;margin-bottom:1rem;color:#0f172a}.row{display:flex;justify-content:space-between;padding:.75rem 0;border-bottom:1px solid #e2e8f0}
+.label{color:#64748b;font-size:.875rem}.value{font-weight:600}
+.price{font-size:1.75rem;color:#059669;text-align:center;margin:1.5rem 0}
+.btn{display:block;width:100%;padding:1rem;background:#6366f1;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer;text-align:center;text-decoration:none;margin-top:1rem}
+.btn:hover{background:#4f46e5}.paid{background:#059669;padding:1rem;border-radius:8px;color:#fff;text-align:center;font-weight:600;margin-top:1rem}
+</style></head><body><div class="card">
+<h1>Booking Confirmation</h1>
+<div class="row"><span class="label">Service</span><span class="value">${appt.service_name || 'Appointment'}</span></div>
+<div class="row"><span class="label">Date</span><span class="value">${appt.date}</span></div>
+<div class="row"><span class="label">Time</span><span class="value">${appt.start_time} — ${appt.end_time}</span></div>
+${appt.staff_name ? `<div class="row"><span class="label">With</span><span class="value">${appt.staff_name}</span></div>` : ''}
+<div class="row"><span class="label">Status</span><span class="value">${appt.status}</span></div>
+<div class="price">$${amount} ${(appt.currency || 'USD').toUpperCase()}</div>
+${isPaid ? '<div class="paid">Payment Complete</div>' : `<a class="btn" href="/public/booking/${apptId}/pay?token=${token}">Pay Now</a>`}
+</div></body></html>`;
+    return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+  } catch (e: any) {
+    slog('error', 'Public booking page failed', { error: e?.message });
+    return json({ error: 'Internal error' }, 500);
+  }
+});
+
+// GET /public/booking/:id/pay — Redirect to Stripe Checkout (creates session if needed)
+app.get('/public/booking/:id/pay', async (c) => {
+  try {
+    const apptId = c.req.param('id');
+    const token = c.req.query('token');
+    if (!token || !c.env.BOOKING_HMAC_KEY || !c.env.STRIPE_SECRET_KEY) return json({ error: 'Invalid or missing token' }, 403);
+
+    const valid = await hmacVerify(c.env.BOOKING_HMAC_KEY, `booking:${apptId}`, token);
+    if (!valid) return json({ error: 'Invalid token' }, 403);
+
+    const appt = await c.env.DB.prepare(
+      'SELECT a.*, s.name as service_name, s.currency, cu.email as customer_email FROM appointments a LEFT JOIN services s ON a.service_id=s.id LEFT JOIN customers cu ON a.customer_id=cu.id WHERE a.id=?'
+    ).bind(apptId).first<any>();
+    if (!appt) return json({ error: 'Appointment not found' }, 404);
+    if (appt.payment_status === 'paid') return Response.redirect(`https://echo-booking.bmcii1976.workers.dev/public/booking/${apptId}?token=${token}`, 302);
+
+    const amount = Math.round((appt.price || 0) * 100);
+    if (amount <= 0) return json({ error: 'No amount to charge' }, 400);
+
+    const baseUrl = 'https://echo-booking.bmcii1976.workers.dev';
+    const params = new URLSearchParams();
+    params.append('mode', 'payment');
+    params.append('payment_method_types[0]', 'card');
+    params.append('line_items[0][price_data][currency]', (appt.currency || 'usd').toLowerCase());
+    params.append('line_items[0][price_data][unit_amount]', String(amount));
+    params.append('line_items[0][price_data][product_data][name]', appt.service_name || 'Appointment');
+    params.append('line_items[0][price_data][product_data][description]', `Booking on ${appt.date} at ${appt.start_time}`);
+    params.append('line_items[0][quantity]', '1');
+    params.append('success_url', `${baseUrl}/public/booking/${apptId}?token=${token}&paid=1`);
+    params.append('cancel_url', `${baseUrl}/public/booking/${apptId}?token=${token}`);
+    params.append('client_reference_id', apptId);
+    if (appt.customer_email) params.append('customer_email', appt.customer_email);
+    params.append('metadata[appointment_id]', apptId);
+    params.append('metadata[tenant_id]', appt.tenant_id);
+
+    const stripeResp = await fetch('https://api.stripe.com/v1/checkout/sessions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${c.env.STRIPE_SECRET_KEY}`, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: params.toString(),
+    });
+    const session = await stripeResp.json() as any;
+    if (!stripeResp.ok) {
+      slog('error', 'Stripe checkout failed (public)', { error: session.error?.message });
+      return json({ error: 'Payment system error' }, 502);
+    }
+
+    await c.env.DB.prepare("UPDATE appointments SET stripe_checkout_id=?, payment_status='pending', updated_at=datetime('now') WHERE id=?")
+      .bind(session.id, apptId).run();
+
+    return Response.redirect(session.url, 303);
+  } catch (e: any) {
+    slog('error', 'Public pay redirect failed', { error: e?.message });
+    return json({ error: 'Internal error' }, 500);
+  }
+});
+
+// POST /webhooks/stripe — Stripe webhook handler with signature verification
+app.post('/webhooks/stripe', async (c) => {
+  try {
+    if (!c.env.STRIPE_WEBHOOK_SECRET) return json({ error: 'Webhook secret not configured' }, 503);
+    const sigHeader = c.req.header('stripe-signature') || '';
+    const rawBody = await c.req.text();
+
+    // Parse signature header: t=timestamp,v1=signature
+    const parts: Record<string, string> = {};
+    for (const part of sigHeader.split(',')) {
+      const [k, v] = part.split('=', 2);
+      if (k && v) parts[k.trim()] = v.trim();
+    }
+    const timestamp = parts['t'];
+    const v1Sig = parts['v1'];
+    if (!timestamp || !v1Sig) return json({ error: 'Invalid signature format' }, 400);
+
+    // Verify timestamp tolerance (5 minutes)
+    const ts = parseInt(timestamp, 10);
+    const now = Math.floor(Date.now() / 1000);
+    if (Math.abs(now - ts) > 300) {
+      slog('warn', 'Stripe webhook timestamp out of tolerance', { diff: Math.abs(now - ts) });
+      return json({ error: 'Timestamp outside tolerance' }, 400);
+    }
+
+    // Verify signature: HMAC-SHA256 of "timestamp.rawBody"
+    const signedPayload = `${timestamp}.${rawBody}`;
+    const expectedSig = await hmacSign(c.env.STRIPE_WEBHOOK_SECRET, signedPayload);
+    // Constant-time comparison
+    if (expectedSig.length !== v1Sig.length) return json({ error: 'Invalid signature' }, 401);
+    let mismatch = 0;
+    for (let i = 0; i < expectedSig.length; i++) mismatch |= expectedSig.charCodeAt(i) ^ v1Sig.charCodeAt(i);
+    if (mismatch !== 0) {
+      slog('warn', 'Stripe webhook signature mismatch');
+      return json({ error: 'Invalid signature' }, 401);
+    }
+
+    const event = JSON.parse(rawBody) as { type: string; data: { object: any } };
+    slog('info', 'Stripe webhook received', { type: event.type });
+
+    if (event.type === 'checkout.session.completed') {
+      const session = event.data.object;
+      const apptId = session.metadata?.appointment_id || session.client_reference_id;
+      if (apptId) {
+        await c.env.DB.prepare(
+          "UPDATE appointments SET payment_status='paid', stripe_payment_id=?, paid_at=datetime('now'), updated_at=datetime('now') WHERE id=?"
+        ).bind(session.payment_intent || session.id, apptId).run();
+        // Update customer total_spent
+        const appt = await c.env.DB.prepare('SELECT tenant_id, customer_id, price FROM appointments WHERE id=?').bind(apptId).first<any>();
+        if (appt) {
+          await c.env.DB.prepare("UPDATE customers SET total_spent=total_spent+?, updated_at=datetime('now') WHERE id=? AND tenant_id=?")
+            .bind(appt.price || 0, appt.customer_id, appt.tenant_id).run();
+          await logAct(c.env.DB, appt.tenant_id, 'appointment', apptId, 'payment_received', `Stripe payment ${session.payment_intent || session.id} — $${((session.amount_total || 0) / 100).toFixed(2)}`);
+        }
+        slog('info', 'Payment recorded', { appointment_id: apptId, payment_intent: session.payment_intent });
+      }
+    } else if (event.type === 'checkout.session.expired') {
+      const session = event.data.object;
+      const apptId = session.metadata?.appointment_id || session.client_reference_id;
+      if (apptId) {
+        await c.env.DB.prepare("UPDATE appointments SET payment_status='expired', updated_at=datetime('now') WHERE id=? AND payment_status='pending'")
+          .bind(apptId).run();
+        slog('info', 'Checkout expired', { appointment_id: apptId });
+      }
+    }
+
+    return json({ received: true });
+  } catch (e: any) {
+    slog('error', 'Stripe webhook processing failed', { error: e?.message });
+    return json({ error: 'Webhook processing failed' }, 500);
   }
 });
 
