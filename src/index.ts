@@ -28,6 +28,12 @@ const sanitizeBody = (o: Record<string, unknown>) => { const r: Record<string, u
 const tid = (c: any) => c.req.header('X-Tenant-ID') || c.req.query('tenant_id') || '';
 const json = (d: unknown, s = 200) => new Response(JSON.stringify(d), { status: s, headers: { 'Content-Type': 'application/json' } });
 
+function slog(level: 'info' | 'warn' | 'error', msg: string, data?: Record<string, unknown>) {
+  const entry = { ts: new Date().toISOString(), level, worker: 'echo-booking', version: '1.0.0', msg, ...data };
+  if (level === 'error') console.error(JSON.stringify(entry));
+  else console.log(JSON.stringify(entry));
+}
+
 // Rate limiting
 async function rateLimit(kv: KVNamespace, key: string, limit: number, windowSec = 60): Promise<boolean> {
   const rlKey = `rl:${key}`; const now = Date.now();
