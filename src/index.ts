@@ -1,5 +1,5 @@
 /**
- * Echo Booking v1.0.0 — AI-Powered Appointment Scheduling
+ * Echo Booking v1.1.0 — AI-Powered Appointment Scheduling
  * Cloudflare Worker with Hono, D1, KV, service bindings
  */
 import { Hono } from 'hono';
@@ -29,7 +29,7 @@ const tid = (c: any) => c.req.header('X-Tenant-ID') || c.req.query('tenant_id') 
 const json = (d: unknown, s = 200) => new Response(JSON.stringify(d), { status: s, headers: { 'Content-Type': 'application/json' } });
 
 function slog(level: 'info' | 'warn' | 'error', msg: string, data?: Record<string, unknown>) {
-  const entry = { ts: new Date().toISOString(), level, worker: 'echo-booking', version: '1.0.0', msg, ...data };
+  const entry = { ts: new Date().toISOString(), level, worker: 'echo-booking', version: '1.1.0', msg, ...data };
   if (level === 'error') console.error(JSON.stringify(entry));
   else console.log(JSON.stringify(entry));
 }
@@ -71,7 +71,7 @@ app.use('*', async (c, next) => {
 });
 
 app.get('/', (c) => c.redirect('/health'));
-app.get('/health', (c) => json({ status: 'ok', service: 'echo-booking', version: '1.0.0', time: new Date().toISOString() }));
+app.get('/health', (c) => json({ status: 'ok', service: 'echo-booking', version: '1.1.0', time: new Date().toISOString() }));
 
 // ═══════════════ TENANTS ═══════════════
 app.post('/tenants', async (c) => {
@@ -216,7 +216,7 @@ app.get('/slots', async (c) => {
   if (!date || !serviceId) return json({ error: 'date and service_id required' }, 400);
   const service = await c.env.DB.prepare('SELECT * FROM services WHERE id=? AND tenant_id=?').bind(serviceId, t).first() as any;
   if (!service) return json({ error: 'Service not found' }, 404);
-  const dayOfWeek = new Date(date + 'T12:00:00').getDay();
+  const dayOfWeek = new Date(date + 'T12:00:00Z').getUTCDay();
   // Get availability for staff (or all staff for this service)
   let availQ = 'SELECT a.* FROM availability a';
   const availP: string[] = [t];
@@ -266,6 +266,19 @@ app.post('/appointments', async (c) => {
   // Get service for duration
   const svc = await c.env.DB.prepare('SELECT * FROM services WHERE id=? AND tenant_id=?').bind(b.service_id, t).first() as any;
   const endTime = (b.end_time as string) || addMinutes(b.start_time as string, svc?.duration_minutes || 60);
+  // Double-booking protection: check for overlapping appointments on the same staff
+  const overlap = await c.env.DB.prepare(
+    "SELECT id FROM appointments WHERE staff_id = ? AND date = ? AND status NOT IN ('cancelled','no-show') AND ((start_time < ? AND end_time > ?) OR (start_time < ? AND end_time > ?))"
+  ).bind(b.staff_id, b.date, endTime, b.start_time, b.start_time, endTime).first();
+  if (overlap) return c.json({ error: 'Time slot already booked' }, 409);
+  // Max daily bookings enforcement
+  const tenant = await c.env.DB.prepare("SELECT max_daily_bookings FROM tenants WHERE id = ?").bind(t).first();
+  if (tenant?.max_daily_bookings) {
+    const dayCount = await c.env.DB.prepare(
+      "SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id = ? AND date = ? AND status NOT IN ('cancelled','no-show')"
+    ).bind(t, b.date).first();
+    if ((dayCount as any)?.cnt >= tenant.max_daily_bookings) return c.json({ error: 'Daily booking limit reached' }, 429);
+  }
   const status = b.status || 'confirmed';
   await c.env.DB.prepare('INSERT INTO appointments (id,tenant_id,customer_id,staff_id,service_id,location_id,status,start_time,end_time,date,price,notes,customer_notes,internal_notes,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
     .bind(id, t, b.customer_id, b.staff_id, b.service_id, b.location_id||null, status, b.start_time, endTime, b.date, b.price||svc?.price||0, b.notes||null, b.customer_notes||null, b.internal_notes||null, b.source||'manual').run();
@@ -292,6 +305,7 @@ app.post('/appointments/:id/cancel', async (c) => {
     if (waiters.results.length > 0) {
       for (const w of waiters.results as any[]) {
         await c.env.DB.prepare("UPDATE waitlist SET status='notified',notified_at=datetime('now') WHERE id=?").bind(w.id).run();
+        // TODO: Send actual notification (email/SMS) — pending email service binding integration
       }
     }
   }
@@ -524,8 +538,11 @@ export default {
         if (dt.getDay() !== rec.day_of_week) continue;
         const ds = dt.toISOString().split('T')[0];
         if (ds < rec.start_date || (rec.end_date && ds > rec.end_date)) continue;
-        const ex = await env.DB.prepare("SELECT COUNT(*) as c FROM appointments WHERE tenant_id=? AND customer_id=? AND service_id=? AND date=? AND recurring_id=?").bind(rec.tenant_id, rec.customer_id, rec.service_id, ds, rec.id).first() as any;
-        if (ex?.c > 0) continue;
+        // Duplicate protection: check by recurring_id + date (simpler, faster)
+        const exists = await env.DB.prepare(
+          "SELECT id FROM appointments WHERE recurring_id = ? AND date = ?"
+        ).bind(rec.id, ds).first();
+        if (exists) continue;
         await env.DB.prepare("INSERT INTO appointments (id,tenant_id,customer_id,staff_id,service_id,location_id,status,start_time,end_time,date,is_recurring,recurring_id,source) VALUES (?,?,?,?,?,?,'confirmed',?,?,?,1,?,'recurring')")
           .bind(uid(), rec.tenant_id, rec.customer_id, rec.staff_id, rec.service_id, rec.location_id||null, rec.start_time, endTime, ds, rec.id).run();
       }
