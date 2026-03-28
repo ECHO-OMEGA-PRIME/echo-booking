@@ -5,7 +5,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 
-interface Env { DB: D1Database; CACHE: KVNamespace; ENGINE_RUNTIME: Fetcher; SHARED_BRAIN: Fetcher; ECHO_API_KEY?: string; }
+interface Env { DB: D1Database; CACHE: KVNamespace; ENGINE_RUNTIME: Fetcher; SHARED_BRAIN: Fetcher; EMAIL_SENDER: Fetcher; ECHO_API_KEY?: string; }
 interface RLState { c: number; t: number }
 
 const app = new Hono<{ Bindings: Env }>();
@@ -27,6 +27,19 @@ const sanitize = (s: string, max = 2000) => s?.replace(/[\x00-\x08\x0B\x0C\x0E-\
 const sanitizeBody = (o: Record<string, unknown>) => { const r: Record<string, unknown> = {}; for (const [k, v] of Object.entries(o)) r[k] = typeof v === 'string' ? sanitize(v) : v; return r; };
 const tid = (c: any) => c.req.header('X-Tenant-ID') || c.req.query('tenant_id') || '';
 const json = (d: unknown, s = 200) => new Response(JSON.stringify(d), { status: s, headers: { 'Content-Type': 'application/json' } });
+
+async function sendEmail(env: Env, to: string, subject: string, html: string): Promise<void> {
+  if (!env.EMAIL_SENDER || !to) return;
+  try {
+    await env.EMAIL_SENDER.fetch('https://email/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to, subject, html, from_name: 'Echo Booking' }),
+    });
+  } catch (e) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', msg: 'Email send failed', to, error: String(e) }));
+  }
+}
 
 function slog(level: 'info' | 'warn' | 'error', msg: string, data?: Record<string, unknown>) {
   const entry = { ts: new Date().toISOString(), level, worker: 'echo-booking', version: '1.1.0', msg, ...data };
@@ -396,6 +409,13 @@ app.post('/appointments', async (c) => {
     // Update customer stats
     await c.env.DB.prepare('UPDATE customers SET total_bookings=total_bookings+1,updated_at=datetime(\'now\') WHERE id=? AND tenant_id=?').bind(b.customer_id, t).run();
     await logAct(c.env.DB, t, 'appointment', id, 'booked', `Appointment booked for ${b.date} ${b.start_time}`);
+    // Send confirmation email (fire-and-forget)
+    const customer = await c.env.DB.prepare('SELECT name, email FROM customers WHERE id=? AND tenant_id=?').bind(b.customer_id, t).first<{name:string;email:string}>();
+    if (customer?.email) {
+      sendEmail(c.env, customer.email, `Booking Confirmed — ${b.date}`,
+        `<h2>Booking Confirmed</h2><p>Hi ${sanitize(customer.name || 'there', 50)},</p><p>Your appointment is confirmed:</p><ul><li><strong>Date:</strong> ${sanitize(String(b.date),20)}</li><li><strong>Time:</strong> ${sanitize(String(b.start_time),10)} — ${sanitize(endTime,10)}</li><li><strong>Service:</strong> ${sanitize(svc?.name || 'Appointment',100)}</li></ul><p>Thank you for booking with us!</p>`
+      );
+    }
     return json({ id, end_time: endTime }, 201);
   } catch (e: any) {
     console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /appointments', error: e?.message }));
@@ -426,7 +446,14 @@ app.post('/appointments/:id/cancel', async (c) => {
       if (waiters.results.length > 0) {
         for (const w of waiters.results as any[]) {
           await c.env.DB.prepare("UPDATE waitlist SET status='notified',notified_at=datetime('now') WHERE id=?").bind(w.id).run();
-          // TODO: Send actual notification (email/SMS) — pending email service binding integration
+          // Send waitlist notification email
+          const wCustomer = await c.env.DB.prepare('SELECT name, email FROM customers WHERE id=?').bind(w.customer_id).first<{name:string;email:string}>();
+          const wService = await c.env.DB.prepare('SELECT name FROM services WHERE id=?').bind(w.service_id).first<{name:string}>();
+          if (wCustomer?.email) {
+            sendEmail(c.env, wCustomer.email, `A Slot Just Opened Up!`,
+              `<h2>Good News!</h2><p>Hi ${sanitize(wCustomer.name || 'there', 50)},</p><p>A time slot has opened up for <strong>${sanitize(wService?.name || 'your requested service',100)}</strong> on <strong>${sanitize(String(appt.date),20)}</strong>.</p><p>Book now before it fills up!</p>`
+            );
+          }
         }
       }
     }
