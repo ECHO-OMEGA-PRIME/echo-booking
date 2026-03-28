@@ -75,335 +75,516 @@ app.get('/health', (c) => json({ status: 'ok', service: 'echo-booking', version:
 
 // ═══════════════ TENANTS ═══════════════
 app.post('/tenants', async (c) => {
-  const b = sanitizeBody(await c.req.json()); const id = uid();
-  await c.env.DB.prepare('INSERT INTO tenants (id,name,email,phone,timezone,currency,booking_window_days,min_notice_hours,cancellation_hours,buffer_minutes,max_daily_bookings,allow_waitlist,require_approval,confirmation_message,cancellation_policy) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .bind(id, b.name, b.email||null, b.phone||null, b.timezone||'America/Chicago', b.currency||'USD', b.booking_window_days||60, b.min_notice_hours||1, b.cancellation_hours||24, b.buffer_minutes||0, b.max_daily_bookings||0, b.allow_waitlist??1, b.require_approval||0, b.confirmation_message||null, b.cancellation_policy||null).run();
-  return json({ id }, 201);
+  try {
+    const b = sanitizeBody(await c.req.json()); const id = uid();
+    await c.env.DB.prepare('INSERT INTO tenants (id,name,email,phone,timezone,currency,booking_window_days,min_notice_hours,cancellation_hours,buffer_minutes,max_daily_bookings,allow_waitlist,require_approval,confirmation_message,cancellation_policy) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(id, b.name, b.email||null, b.phone||null, b.timezone||'America/Chicago', b.currency||'USD', b.booking_window_days||60, b.min_notice_hours||1, b.cancellation_hours||24, b.buffer_minutes||0, b.max_daily_bookings||0, b.allow_waitlist??1, b.require_approval||0, b.confirmation_message||null, b.cancellation_policy||null).run();
+    return json({ id }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /tenants', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.get('/tenants/:id', async (c) => {
-  const r = await c.env.DB.prepare('SELECT * FROM tenants WHERE id=?').bind(c.req.param('id')).first();
-  return r ? json(r) : json({ error: 'Not found' }, 404);
+  try {
+    const r = await c.env.DB.prepare('SELECT * FROM tenants WHERE id=?').bind(c.req.param('id')).first();
+    return r ? json(r) : json({ error: 'Not found' }, 404);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /tenants/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.put('/tenants/:id', async (c) => {
-  const b = sanitizeBody(await c.req.json());
-  await c.env.DB.prepare('UPDATE tenants SET name=coalesce(?,name),email=coalesce(?,email),phone=coalesce(?,phone),timezone=coalesce(?,timezone),booking_window_days=coalesce(?,booking_window_days),min_notice_hours=coalesce(?,min_notice_hours),cancellation_hours=coalesce(?,cancellation_hours),buffer_minutes=coalesce(?,buffer_minutes),max_daily_bookings=coalesce(?,max_daily_bookings),allow_waitlist=coalesce(?,allow_waitlist),require_approval=coalesce(?,require_approval),updated_at=datetime(\'now\') WHERE id=?')
-    .bind(b.name||null, b.email||null, b.phone||null, b.timezone||null, b.booking_window_days??null, b.min_notice_hours??null, b.cancellation_hours??null, b.buffer_minutes??null, b.max_daily_bookings??null, b.allow_waitlist??null, b.require_approval??null, c.req.param('id')).run();
-  return json({ updated: true });
+  try {
+    const b = sanitizeBody(await c.req.json());
+    await c.env.DB.prepare('UPDATE tenants SET name=coalesce(?,name),email=coalesce(?,email),phone=coalesce(?,phone),timezone=coalesce(?,timezone),booking_window_days=coalesce(?,booking_window_days),min_notice_hours=coalesce(?,min_notice_hours),cancellation_hours=coalesce(?,cancellation_hours),buffer_minutes=coalesce(?,buffer_minutes),max_daily_bookings=coalesce(?,max_daily_bookings),allow_waitlist=coalesce(?,allow_waitlist),require_approval=coalesce(?,require_approval),updated_at=datetime(\'now\') WHERE id=?')
+      .bind(b.name||null, b.email||null, b.phone||null, b.timezone||null, b.booking_window_days??null, b.min_notice_hours??null, b.cancellation_hours??null, b.buffer_minutes??null, b.max_daily_bookings??null, b.allow_waitlist??null, b.require_approval??null, c.req.param('id')).run();
+    return json({ updated: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'PUT /tenants/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ LOCATIONS ═══════════════
 app.get('/locations', async (c) => {
-  const r = await c.env.DB.prepare('SELECT * FROM locations WHERE tenant_id=? AND is_active=1 ORDER BY name').bind(tid(c)).all();
-  return json(r.results);
+  try {
+    const r = await c.env.DB.prepare('SELECT * FROM locations WHERE tenant_id=? AND is_active=1 ORDER BY name').bind(tid(c)).all();
+    return json(r.results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /locations', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.post('/locations', async (c) => {
-  const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
-  await c.env.DB.prepare('INSERT INTO locations (id,tenant_id,name,address,city,state,zip,phone,timezone) VALUES (?,?,?,?,?,?,?,?,?)')
-    .bind(id, t, b.name, b.address||null, b.city||null, b.state||null, b.zip||null, b.phone||null, b.timezone||null).run();
-  return json({ id }, 201);
+  try {
+    const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
+    await c.env.DB.prepare('INSERT INTO locations (id,tenant_id,name,address,city,state,zip,phone,timezone) VALUES (?,?,?,?,?,?,?,?,?)')
+      .bind(id, t, b.name, b.address||null, b.city||null, b.state||null, b.zip||null, b.phone||null, b.timezone||null).run();
+    return json({ id }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /locations', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ SERVICES ═══════════════
 app.get('/services', async (c) => {
-  const t = tid(c); const cat = c.req.query('category');
-  let q = 'SELECT * FROM services WHERE tenant_id=? AND is_active=1'; const p: string[] = [t];
-  if (cat) { q += ' AND category=?'; p.push(cat); }
-  q += ' ORDER BY sort_order, name';
-  return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  try {
+    const t = tid(c); const cat = c.req.query('category');
+    let q = 'SELECT * FROM services WHERE tenant_id=? AND is_active=1'; const p: string[] = [t];
+    if (cat) { q += ' AND category=?'; p.push(cat); }
+    q += ' ORDER BY sort_order, name';
+    return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /services', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.post('/services', async (c) => {
-  const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
-  await c.env.DB.prepare('INSERT INTO services (id,tenant_id,name,description,duration_minutes,price,currency,color,category,buffer_before,buffer_after,max_attendees,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .bind(id, t, b.name, b.description||null, b.duration_minutes||60, b.price||0, b.currency||'USD', b.color||'#14b8a6', b.category||null, b.buffer_before||0, b.buffer_after||0, b.max_attendees||1, b.sort_order||0).run();
-  return json({ id }, 201);
+  try {
+    const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
+    await c.env.DB.prepare('INSERT INTO services (id,tenant_id,name,description,duration_minutes,price,currency,color,category,buffer_before,buffer_after,max_attendees,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(id, t, b.name, b.description||null, b.duration_minutes||60, b.price||0, b.currency||'USD', b.color||'#14b8a6', b.category||null, b.buffer_before||0, b.buffer_after||0, b.max_attendees||1, b.sort_order||0).run();
+    return json({ id }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /services', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.put('/services/:id', async (c) => {
-  const b = sanitizeBody(await c.req.json());
-  await c.env.DB.prepare('UPDATE services SET name=coalesce(?,name),description=coalesce(?,description),duration_minutes=coalesce(?,duration_minutes),price=coalesce(?,price),color=coalesce(?,color),category=coalesce(?,category),buffer_before=coalesce(?,buffer_before),buffer_after=coalesce(?,buffer_after),max_attendees=coalesce(?,max_attendees),is_active=coalesce(?,is_active) WHERE id=? AND tenant_id=?')
-    .bind(b.name||null, b.description||null, b.duration_minutes??null, b.price??null, b.color||null, b.category||null, b.buffer_before??null, b.buffer_after??null, b.max_attendees??null, b.is_active??null, c.req.param('id'), tid(c)).run();
-  return json({ updated: true });
+  try {
+    const b = sanitizeBody(await c.req.json());
+    await c.env.DB.prepare('UPDATE services SET name=coalesce(?,name),description=coalesce(?,description),duration_minutes=coalesce(?,duration_minutes),price=coalesce(?,price),color=coalesce(?,color),category=coalesce(?,category),buffer_before=coalesce(?,buffer_before),buffer_after=coalesce(?,buffer_after),max_attendees=coalesce(?,max_attendees),is_active=coalesce(?,is_active) WHERE id=? AND tenant_id=?')
+      .bind(b.name||null, b.description||null, b.duration_minutes??null, b.price??null, b.color||null, b.category||null, b.buffer_before??null, b.buffer_after??null, b.max_attendees??null, b.is_active??null, c.req.param('id'), tid(c)).run();
+    return json({ updated: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'PUT /services/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ STAFF ═══════════════
 app.get('/staff', async (c) => {
-  const r = await c.env.DB.prepare('SELECT * FROM staff WHERE tenant_id=? AND is_active=1 ORDER BY name').bind(tid(c)).all();
-  return json(r.results);
+  try {
+    const r = await c.env.DB.prepare('SELECT * FROM staff WHERE tenant_id=? AND is_active=1 ORDER BY name').bind(tid(c)).all();
+    return json(r.results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /staff', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.post('/staff', async (c) => {
-  const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
-  await c.env.DB.prepare('INSERT INTO staff (id,tenant_id,name,email,phone,role,avatar_url,bio) VALUES (?,?,?,?,?,?,?,?)')
-    .bind(id, t, b.name, b.email||null, b.phone||null, b.role||'staff', b.avatar_url||null, b.bio||null).run();
-  return json({ id }, 201);
+  try {
+    const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
+    await c.env.DB.prepare('INSERT INTO staff (id,tenant_id,name,email,phone,role,avatar_url,bio) VALUES (?,?,?,?,?,?,?,?)')
+      .bind(id, t, b.name, b.email||null, b.phone||null, b.role||'staff', b.avatar_url||null, b.bio||null).run();
+    return json({ id }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /staff', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.get('/staff/:id', async (c) => {
-  const staff = await c.env.DB.prepare('SELECT * FROM staff WHERE id=? AND tenant_id=?').bind(c.req.param('id'), tid(c)).first();
-  if (!staff) return json({ error: 'Not found' }, 404);
-  const svcs = await c.env.DB.prepare('SELECT s.* FROM services s JOIN staff_services ss ON s.id=ss.service_id WHERE ss.staff_id=? AND ss.tenant_id=?').bind(c.req.param('id'), tid(c)).all();
-  const avail = await c.env.DB.prepare('SELECT * FROM availability WHERE staff_id=? AND tenant_id=? AND is_active=1 ORDER BY day_of_week, start_time').bind(c.req.param('id'), tid(c)).all();
-  const reviews = await c.env.DB.prepare('SELECT AVG(rating) as avg_rating, COUNT(*) as review_count FROM reviews WHERE staff_id=? AND tenant_id=?').bind(c.req.param('id'), tid(c)).first();
-  return json({ ...staff, services: svcs.results, availability: avail.results, avg_rating: (reviews as any)?.avg_rating, review_count: (reviews as any)?.review_count });
+  try {
+    const staff = await c.env.DB.prepare('SELECT * FROM staff WHERE id=? AND tenant_id=?').bind(c.req.param('id'), tid(c)).first();
+    if (!staff) return json({ error: 'Not found' }, 404);
+    const svcs = await c.env.DB.prepare('SELECT s.* FROM services s JOIN staff_services ss ON s.id=ss.service_id WHERE ss.staff_id=? AND ss.tenant_id=?').bind(c.req.param('id'), tid(c)).all();
+    const avail = await c.env.DB.prepare('SELECT * FROM availability WHERE staff_id=? AND tenant_id=? AND is_active=1 ORDER BY day_of_week, start_time').bind(c.req.param('id'), tid(c)).all();
+    const reviews = await c.env.DB.prepare('SELECT AVG(rating) as avg_rating, COUNT(*) as review_count FROM reviews WHERE staff_id=? AND tenant_id=?').bind(c.req.param('id'), tid(c)).first();
+    return json({ ...staff, services: svcs.results, availability: avail.results, avg_rating: (reviews as any)?.avg_rating, review_count: (reviews as any)?.review_count });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /staff/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 // Assign services to staff
 app.post('/staff/:id/services', async (c) => {
-  const t = tid(c); const b = await c.req.json() as { service_ids: string[] };
-  await c.env.DB.prepare('DELETE FROM staff_services WHERE staff_id=? AND tenant_id=?').bind(c.req.param('id'), t).run();
-  for (const svcId of b.service_ids) {
-    await c.env.DB.prepare('INSERT INTO staff_services (staff_id,service_id,tenant_id) VALUES (?,?,?)').bind(c.req.param('id'), svcId, t).run();
+  try {
+    const t = tid(c); const b = await c.req.json() as { service_ids: string[] };
+    await c.env.DB.prepare('DELETE FROM staff_services WHERE staff_id=? AND tenant_id=?').bind(c.req.param('id'), t).run();
+    for (const svcId of b.service_ids) {
+      await c.env.DB.prepare('INSERT INTO staff_services (staff_id,service_id,tenant_id) VALUES (?,?,?)').bind(c.req.param('id'), svcId, t).run();
+    }
+    return json({ assigned: b.service_ids.length });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /staff/:id/services', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  return json({ assigned: b.service_ids.length });
 });
 
 // ═══════════════ AVAILABILITY ═══════════════
 app.get('/availability', async (c) => {
-  const t = tid(c); const staffId = c.req.query('staff_id');
-  let q = 'SELECT a.*, s.name as staff_name FROM availability a LEFT JOIN staff s ON a.staff_id=s.id WHERE a.tenant_id=? AND a.is_active=1';
-  const p: string[] = [t];
-  if (staffId) { q += ' AND a.staff_id=?'; p.push(staffId); }
-  q += ' ORDER BY a.day_of_week, a.start_time';
-  return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  try {
+    const t = tid(c); const staffId = c.req.query('staff_id');
+    let q = 'SELECT a.*, s.name as staff_name FROM availability a LEFT JOIN staff s ON a.staff_id=s.id WHERE a.tenant_id=? AND a.is_active=1';
+    const p: string[] = [t];
+    if (staffId) { q += ' AND a.staff_id=?'; p.push(staffId); }
+    q += ' ORDER BY a.day_of_week, a.start_time';
+    return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /availability', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.post('/availability', async (c) => {
-  const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
-  await c.env.DB.prepare('INSERT INTO availability (id,tenant_id,staff_id,day_of_week,start_time,end_time,location_id) VALUES (?,?,?,?,?,?,?)')
-    .bind(id, t, b.staff_id, b.day_of_week, b.start_time, b.end_time, b.location_id||null).run();
-  return json({ id }, 201);
+  try {
+    const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
+    await c.env.DB.prepare('INSERT INTO availability (id,tenant_id,staff_id,day_of_week,start_time,end_time,location_id) VALUES (?,?,?,?,?,?,?)')
+      .bind(id, t, b.staff_id, b.day_of_week, b.start_time, b.end_time, b.location_id||null).run();
+    return json({ id }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /availability', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.delete('/availability/:id', async (c) => {
-  await c.env.DB.prepare('DELETE FROM availability WHERE id=? AND tenant_id=?').bind(c.req.param('id'), tid(c)).run();
-  return json({ deleted: true });
+  try {
+    await c.env.DB.prepare('DELETE FROM availability WHERE id=? AND tenant_id=?').bind(c.req.param('id'), tid(c)).run();
+    return json({ deleted: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'DELETE /availability/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ TIME OFF ═══════════════
 app.get('/time-off', async (c) => {
-  const t = tid(c); const staffId = c.req.query('staff_id');
-  let q = 'SELECT t.*, s.name as staff_name FROM time_off t LEFT JOIN staff s ON t.staff_id=s.id WHERE t.tenant_id=?'; const p: string[] = [t];
-  if (staffId) { q += ' AND t.staff_id=?'; p.push(staffId); }
-  q += ' ORDER BY t.start_date DESC';
-  return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  try {
+    const t = tid(c); const staffId = c.req.query('staff_id');
+    let q = 'SELECT t.*, s.name as staff_name FROM time_off t LEFT JOIN staff s ON t.staff_id=s.id WHERE t.tenant_id=?'; const p: string[] = [t];
+    if (staffId) { q += ' AND t.staff_id=?'; p.push(staffId); }
+    q += ' ORDER BY t.start_date DESC';
+    return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /time-off', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.post('/time-off', async (c) => {
-  const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
-  await c.env.DB.prepare('INSERT INTO time_off (id,tenant_id,staff_id,start_date,end_date,reason) VALUES (?,?,?,?,?,?)')
-    .bind(id, t, b.staff_id, b.start_date, b.end_date, b.reason||null).run();
-  return json({ id }, 201);
+  try {
+    const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
+    await c.env.DB.prepare('INSERT INTO time_off (id,tenant_id,staff_id,start_date,end_date,reason) VALUES (?,?,?,?,?,?)')
+      .bind(id, t, b.staff_id, b.start_date, b.end_date, b.reason||null).run();
+    return json({ id }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /time-off', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ CUSTOMERS ═══════════════
 app.get('/customers', async (c) => {
-  const t = tid(c); const search = c.req.query('search');
-  let q = 'SELECT * FROM customers WHERE tenant_id=?'; const p: string[] = [t];
-  if (search) { q += ' AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)'; const s = `%${sanitize(search,100)}%`; p.push(s,s,s); }
-  q += ' ORDER BY name LIMIT 200';
-  return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  try {
+    const t = tid(c); const search = c.req.query('search');
+    let q = 'SELECT * FROM customers WHERE tenant_id=?'; const p: string[] = [t];
+    if (search) { q += ' AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)'; const s = `%${sanitize(search,100)}%`; p.push(s,s,s); }
+    q += ' ORDER BY name LIMIT 200';
+    return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /customers', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.post('/customers', async (c) => {
-  const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
-  await c.env.DB.prepare('INSERT INTO customers (id,tenant_id,name,email,phone,notes) VALUES (?,?,?,?,?,?)')
-    .bind(id, t, b.name, b.email||null, b.phone||null, b.notes||null).run();
-  return json({ id }, 201);
+  try {
+    const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
+    await c.env.DB.prepare('INSERT INTO customers (id,tenant_id,name,email,phone,notes) VALUES (?,?,?,?,?,?)')
+      .bind(id, t, b.name, b.email||null, b.phone||null, b.notes||null).run();
+    return json({ id }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /customers', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.get('/customers/:id', async (c) => {
-  const t = tid(c); const cust = await c.env.DB.prepare('SELECT * FROM customers WHERE id=? AND tenant_id=?').bind(c.req.param('id'), t).first();
-  if (!cust) return json({ error: 'Not found' }, 404);
-  const appts = await c.env.DB.prepare('SELECT a.*, s.name as service_name, st.name as staff_name FROM appointments a LEFT JOIN services s ON a.service_id=s.id LEFT JOIN staff st ON a.staff_id=st.id WHERE a.customer_id=? AND a.tenant_id=? ORDER BY a.date DESC LIMIT 20').bind(c.req.param('id'), t).all();
-  return json({ ...cust, appointments: appts.results });
+  try {
+    const t = tid(c); const cust = await c.env.DB.prepare('SELECT * FROM customers WHERE id=? AND tenant_id=?').bind(c.req.param('id'), t).first();
+    if (!cust) return json({ error: 'Not found' }, 404);
+    const appts = await c.env.DB.prepare('SELECT a.*, s.name as service_name, st.name as staff_name FROM appointments a LEFT JOIN services s ON a.service_id=s.id LEFT JOIN staff st ON a.staff_id=st.id WHERE a.customer_id=? AND a.tenant_id=? ORDER BY a.date DESC LIMIT 20').bind(c.req.param('id'), t).all();
+    return json({ ...cust, appointments: appts.results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /customers/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ APPOINTMENTS ═══════════════
 // Get available slots for a service + staff on a date
 app.get('/slots', async (c) => {
-  const t = tid(c); const date = c.req.query('date'); const serviceId = c.req.query('service_id'); const staffId = c.req.query('staff_id');
-  if (!date || !serviceId) return json({ error: 'date and service_id required' }, 400);
-  const service = await c.env.DB.prepare('SELECT * FROM services WHERE id=? AND tenant_id=?').bind(serviceId, t).first() as any;
-  if (!service) return json({ error: 'Service not found' }, 404);
-  const dayOfWeek = new Date(date + 'T12:00:00Z').getUTCDay();
-  // Get availability for staff (or all staff for this service)
-  let availQ = 'SELECT a.* FROM availability a';
-  const availP: string[] = [t];
-  if (staffId) { availQ += ' WHERE a.tenant_id=? AND a.staff_id=? AND a.day_of_week=? AND a.is_active=1'; availP.push(staffId, String(dayOfWeek)); }
-  else { availQ += ' JOIN staff_services ss ON a.staff_id=ss.staff_id WHERE a.tenant_id=? AND ss.service_id=? AND a.day_of_week=? AND a.is_active=1'; availP.push(serviceId, String(dayOfWeek)); }
-  const avail = await c.env.DB.prepare(availQ).bind(...availP).all();
-  // Get existing appointments
-  const existing = await c.env.DB.prepare("SELECT * FROM appointments WHERE tenant_id=? AND date=? AND status NOT IN ('cancelled','no_show')").bind(t, date).all();
-  // Check time off
-  const timeOff = await c.env.DB.prepare("SELECT staff_id FROM time_off WHERE tenant_id=? AND start_date<=? AND end_date>=?").bind(t, date, date).all();
-  const offStaff = new Set((timeOff.results as any[]).map(r => r.staff_id));
-  // Generate slots
-  const slots: { staff_id: string; start: string; end: string }[] = [];
-  const duration = service.duration_minutes + (service.buffer_before || 0) + (service.buffer_after || 0);
-  for (const a of avail.results as any[]) {
-    if (offStaff.has(a.staff_id)) continue;
-    const [sh, sm] = a.start_time.split(':').map(Number);
-    const [eh, em] = a.end_time.split(':').map(Number);
-    const startMin = sh * 60 + sm; const endMin = eh * 60 + em;
-    for (let m = startMin; m + duration <= endMin; m += 15) {
-      const slotStart = `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
-      const slotEnd = `${String(Math.floor((m+service.duration_minutes)/60)).padStart(2,'0')}:${String((m+service.duration_minutes)%60).padStart(2,'0')}`;
-      // Check conflicts
-      const conflict = (existing.results as any[]).some(e => e.staff_id === a.staff_id && timesOverlap(e.start_time, e.end_time, slotStart, slotEnd));
-      if (!conflict) slots.push({ staff_id: a.staff_id, start: slotStart, end: slotEnd });
+  try {
+    const t = tid(c); const date = c.req.query('date'); const serviceId = c.req.query('service_id'); const staffId = c.req.query('staff_id');
+    if (!date || !serviceId) return json({ error: 'date and service_id required' }, 400);
+    const service = await c.env.DB.prepare('SELECT * FROM services WHERE id=? AND tenant_id=?').bind(serviceId, t).first() as any;
+    if (!service) return json({ error: 'Service not found' }, 404);
+    const dayOfWeek = new Date(date + 'T12:00:00Z').getUTCDay();
+    // Get availability for staff (or all staff for this service)
+    let availQ = 'SELECT a.* FROM availability a';
+    const availP: string[] = [t];
+    if (staffId) { availQ += ' WHERE a.tenant_id=? AND a.staff_id=? AND a.day_of_week=? AND a.is_active=1'; availP.push(staffId, String(dayOfWeek)); }
+    else { availQ += ' JOIN staff_services ss ON a.staff_id=ss.staff_id WHERE a.tenant_id=? AND ss.service_id=? AND a.day_of_week=? AND a.is_active=1'; availP.push(serviceId, String(dayOfWeek)); }
+    const avail = await c.env.DB.prepare(availQ).bind(...availP).all();
+    // Get existing appointments
+    const existing = await c.env.DB.prepare("SELECT * FROM appointments WHERE tenant_id=? AND date=? AND status NOT IN ('cancelled','no_show')").bind(t, date).all();
+    // Check time off
+    const timeOff = await c.env.DB.prepare("SELECT staff_id FROM time_off WHERE tenant_id=? AND start_date<=? AND end_date>=?").bind(t, date, date).all();
+    const offStaff = new Set((timeOff.results as any[]).map(r => r.staff_id));
+    // Generate slots
+    const slots: { staff_id: string; start: string; end: string }[] = [];
+    const duration = service.duration_minutes + (service.buffer_before || 0) + (service.buffer_after || 0);
+    for (const a of avail.results as any[]) {
+      if (offStaff.has(a.staff_id)) continue;
+      const [sh, sm] = a.start_time.split(':').map(Number);
+      const [eh, em] = a.end_time.split(':').map(Number);
+      const startMin = sh * 60 + sm; const endMin = eh * 60 + em;
+      for (let m = startMin; m + duration <= endMin; m += 15) {
+        const slotStart = `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`;
+        const slotEnd = `${String(Math.floor((m+service.duration_minutes)/60)).padStart(2,'0')}:${String((m+service.duration_minutes)%60).padStart(2,'0')}`;
+        // Check conflicts
+        const conflict = (existing.results as any[]).some(e => e.staff_id === a.staff_id && timesOverlap(e.start_time, e.end_time, slotStart, slotEnd));
+        if (!conflict) slots.push({ staff_id: a.staff_id, start: slotStart, end: slotEnd });
+      }
     }
+    return json({ date, service: service.name, duration_minutes: service.duration_minutes, slots });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /slots', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  return json({ date, service: service.name, duration_minutes: service.duration_minutes, slots });
 });
 
 app.get('/appointments', async (c) => {
-  const t = tid(c); const date = c.req.query('date'); const from = c.req.query('from'); const to = c.req.query('to');
-  const staffId = c.req.query('staff_id'); const status = c.req.query('status');
-  let q = 'SELECT a.*, s.name as service_name, st.name as staff_name, cu.name as customer_name, cu.email as customer_email, cu.phone as customer_phone FROM appointments a LEFT JOIN services s ON a.service_id=s.id LEFT JOIN staff st ON a.staff_id=st.id LEFT JOIN customers cu ON a.customer_id=cu.id WHERE a.tenant_id=?';
-  const p: string[] = [t];
-  if (date) { q += ' AND a.date=?'; p.push(date); }
-  if (from) { q += ' AND a.date>=?'; p.push(from); }
-  if (to) { q += ' AND a.date<=?'; p.push(to); }
-  if (staffId) { q += ' AND a.staff_id=?'; p.push(staffId); }
-  if (status) { q += ' AND a.status=?'; p.push(status); }
-  q += ' ORDER BY a.date, a.start_time LIMIT 500';
-  return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  try {
+    const t = tid(c); const date = c.req.query('date'); const from = c.req.query('from'); const to = c.req.query('to');
+    const staffId = c.req.query('staff_id'); const status = c.req.query('status');
+    let q = 'SELECT a.*, s.name as service_name, st.name as staff_name, cu.name as customer_name, cu.email as customer_email, cu.phone as customer_phone FROM appointments a LEFT JOIN services s ON a.service_id=s.id LEFT JOIN staff st ON a.staff_id=st.id LEFT JOIN customers cu ON a.customer_id=cu.id WHERE a.tenant_id=?';
+    const p: string[] = [t];
+    if (date) { q += ' AND a.date=?'; p.push(date); }
+    if (from) { q += ' AND a.date>=?'; p.push(from); }
+    if (to) { q += ' AND a.date<=?'; p.push(to); }
+    if (staffId) { q += ' AND a.staff_id=?'; p.push(staffId); }
+    if (status) { q += ' AND a.status=?'; p.push(status); }
+    q += ' ORDER BY a.date, a.start_time LIMIT 500';
+    return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /appointments', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/appointments', async (c) => {
-  const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
-  // Get service for duration
-  const svc = await c.env.DB.prepare('SELECT * FROM services WHERE id=? AND tenant_id=?').bind(b.service_id, t).first() as any;
-  const endTime = (b.end_time as string) || addMinutes(b.start_time as string, svc?.duration_minutes || 60);
-  // Double-booking protection: check for overlapping appointments on the same staff
-  const overlap = await c.env.DB.prepare(
-    "SELECT id FROM appointments WHERE staff_id = ? AND date = ? AND status NOT IN ('cancelled','no-show') AND ((start_time < ? AND end_time > ?) OR (start_time < ? AND end_time > ?))"
-  ).bind(b.staff_id, b.date, endTime, b.start_time, b.start_time, endTime).first();
-  if (overlap) return c.json({ error: 'Time slot already booked' }, 409);
-  // Max daily bookings enforcement
-  const tenant = await c.env.DB.prepare("SELECT max_daily_bookings FROM tenants WHERE id = ?").bind(t).first();
-  if (tenant?.max_daily_bookings) {
-    const dayCount = await c.env.DB.prepare(
-      "SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id = ? AND date = ? AND status NOT IN ('cancelled','no-show')"
-    ).bind(t, b.date).first();
-    if ((dayCount as any)?.cnt >= tenant.max_daily_bookings) return c.json({ error: 'Daily booking limit reached' }, 429);
+  try {
+    const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
+    // Get service for duration
+    const svc = await c.env.DB.prepare('SELECT * FROM services WHERE id=? AND tenant_id=?').bind(b.service_id, t).first() as any;
+    const endTime = (b.end_time as string) || addMinutes(b.start_time as string, svc?.duration_minutes || 60);
+    // Double-booking protection: check for overlapping appointments on the same staff
+    const overlap = await c.env.DB.prepare(
+      "SELECT id FROM appointments WHERE staff_id = ? AND date = ? AND status NOT IN ('cancelled','no-show') AND ((start_time < ? AND end_time > ?) OR (start_time < ? AND end_time > ?))"
+    ).bind(b.staff_id, b.date, endTime, b.start_time, b.start_time, endTime).first();
+    if (overlap) return c.json({ error: 'Time slot already booked' }, 409);
+    // Max daily bookings enforcement
+    const tenant = await c.env.DB.prepare("SELECT max_daily_bookings FROM tenants WHERE id = ?").bind(t).first();
+    if (tenant?.max_daily_bookings) {
+      const dayCount = await c.env.DB.prepare(
+        "SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id = ? AND date = ? AND status NOT IN ('cancelled','no-show')"
+      ).bind(t, b.date).first();
+      if ((dayCount as any)?.cnt >= tenant.max_daily_bookings) return c.json({ error: 'Daily booking limit reached' }, 429);
+    }
+    const status = b.status || 'confirmed';
+    await c.env.DB.prepare('INSERT INTO appointments (id,tenant_id,customer_id,staff_id,service_id,location_id,status,start_time,end_time,date,price,notes,customer_notes,internal_notes,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(id, t, b.customer_id, b.staff_id, b.service_id, b.location_id||null, status, b.start_time, endTime, b.date, b.price||svc?.price||0, b.notes||null, b.customer_notes||null, b.internal_notes||null, b.source||'manual').run();
+    // Update customer stats
+    await c.env.DB.prepare('UPDATE customers SET total_bookings=total_bookings+1,updated_at=datetime(\'now\') WHERE id=? AND tenant_id=?').bind(b.customer_id, t).run();
+    await logAct(c.env.DB, t, 'appointment', id, 'booked', `Appointment booked for ${b.date} ${b.start_time}`);
+    return json({ id, end_time: endTime }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /appointments', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  const status = b.status || 'confirmed';
-  await c.env.DB.prepare('INSERT INTO appointments (id,tenant_id,customer_id,staff_id,service_id,location_id,status,start_time,end_time,date,price,notes,customer_notes,internal_notes,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-    .bind(id, t, b.customer_id, b.staff_id, b.service_id, b.location_id||null, status, b.start_time, endTime, b.date, b.price||svc?.price||0, b.notes||null, b.customer_notes||null, b.internal_notes||null, b.source||'manual').run();
-  // Update customer stats
-  await c.env.DB.prepare('UPDATE customers SET total_bookings=total_bookings+1,updated_at=datetime(\'now\') WHERE id=? AND tenant_id=?').bind(b.customer_id, t).run();
-  await logAct(c.env.DB, t, 'appointment', id, 'booked', `Appointment booked for ${b.date} ${b.start_time}`);
-  return json({ id, end_time: endTime }, 201);
 });
 
 app.get('/appointments/:id', async (c) => {
-  const r = await c.env.DB.prepare('SELECT a.*, s.name as service_name, s.duration_minutes, st.name as staff_name, cu.name as customer_name, cu.email as customer_email, cu.phone as customer_phone FROM appointments a LEFT JOIN services s ON a.service_id=s.id LEFT JOIN staff st ON a.staff_id=st.id LEFT JOIN customers cu ON a.customer_id=cu.id WHERE a.id=? AND a.tenant_id=?').bind(c.req.param('id'), tid(c)).first();
-  return r ? json(r) : json({ error: 'Not found' }, 404);
+  try {
+    const r = await c.env.DB.prepare('SELECT a.*, s.name as service_name, s.duration_minutes, st.name as staff_name, cu.name as customer_name, cu.email as customer_email, cu.phone as customer_phone FROM appointments a LEFT JOIN services s ON a.service_id=s.id LEFT JOIN staff st ON a.staff_id=st.id LEFT JOIN customers cu ON a.customer_id=cu.id WHERE a.id=? AND a.tenant_id=?').bind(c.req.param('id'), tid(c)).first();
+    return r ? json(r) : json({ error: 'Not found' }, 404);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /appointments/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // Cancel appointment
 app.post('/appointments/:id/cancel', async (c) => {
-  const t = tid(c); const b = await c.req.json() as { reason?: string };
-  await c.env.DB.prepare("UPDATE appointments SET status='cancelled',cancellation_reason=?,cancelled_at=datetime('now'),updated_at=datetime('now') WHERE id=? AND tenant_id=?")
-    .bind(b.reason||null, c.req.param('id'), t).run();
-  // Check waitlist
-  const appt = await c.env.DB.prepare('SELECT * FROM appointments WHERE id=?').bind(c.req.param('id')).first() as any;
-  if (appt) {
-    const waiters = await c.env.DB.prepare("SELECT * FROM waitlist WHERE tenant_id=? AND service_id=? AND status='waiting' AND (preferred_date IS NULL OR preferred_date=?) ORDER BY created_at LIMIT 3").bind(t, appt.service_id, appt.date).all();
-    if (waiters.results.length > 0) {
-      for (const w of waiters.results as any[]) {
-        await c.env.DB.prepare("UPDATE waitlist SET status='notified',notified_at=datetime('now') WHERE id=?").bind(w.id).run();
-        // TODO: Send actual notification (email/SMS) — pending email service binding integration
+  try {
+    const t = tid(c); const b = await c.req.json() as { reason?: string };
+    await c.env.DB.prepare("UPDATE appointments SET status='cancelled',cancellation_reason=?,cancelled_at=datetime('now'),updated_at=datetime('now') WHERE id=? AND tenant_id=?")
+      .bind(b.reason||null, c.req.param('id'), t).run();
+    // Check waitlist
+    const appt = await c.env.DB.prepare('SELECT * FROM appointments WHERE id=?').bind(c.req.param('id')).first() as any;
+    if (appt) {
+      const waiters = await c.env.DB.prepare("SELECT * FROM waitlist WHERE tenant_id=? AND service_id=? AND status='waiting' AND (preferred_date IS NULL OR preferred_date=?) ORDER BY created_at LIMIT 3").bind(t, appt.service_id, appt.date).all();
+      if (waiters.results.length > 0) {
+        for (const w of waiters.results as any[]) {
+          await c.env.DB.prepare("UPDATE waitlist SET status='notified',notified_at=datetime('now') WHERE id=?").bind(w.id).run();
+          // TODO: Send actual notification (email/SMS) — pending email service binding integration
+        }
       }
     }
+    await logAct(c.env.DB, t, 'appointment', c.req.param('id'), 'cancelled', b.reason||'Cancelled');
+    return json({ cancelled: true, waitlist_notified: appt ? true : false });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /appointments/:id/cancel', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  await logAct(c.env.DB, t, 'appointment', c.req.param('id'), 'cancelled', b.reason||'Cancelled');
-  return json({ cancelled: true, waitlist_notified: appt ? true : false });
 });
 
 // Complete appointment
 app.post('/appointments/:id/complete', async (c) => {
-  const t = tid(c);
-  await c.env.DB.prepare("UPDATE appointments SET status='completed',completed_at=datetime('now'),updated_at=datetime('now') WHERE id=? AND tenant_id=?").bind(c.req.param('id'), t).run();
-  const appt = await c.env.DB.prepare('SELECT * FROM appointments WHERE id=?').bind(c.req.param('id')).first() as any;
-  if (appt) {
-    await c.env.DB.prepare('UPDATE customers SET total_spent=total_spent+?,last_visit_at=datetime(\'now\'),updated_at=datetime(\'now\') WHERE id=? AND tenant_id=?').bind(appt.price||0, appt.customer_id, t).run();
+  try {
+    const t = tid(c);
+    await c.env.DB.prepare("UPDATE appointments SET status='completed',completed_at=datetime('now'),updated_at=datetime('now') WHERE id=? AND tenant_id=?").bind(c.req.param('id'), t).run();
+    const appt = await c.env.DB.prepare('SELECT * FROM appointments WHERE id=?').bind(c.req.param('id')).first() as any;
+    if (appt) {
+      await c.env.DB.prepare('UPDATE customers SET total_spent=total_spent+?,last_visit_at=datetime(\'now\'),updated_at=datetime(\'now\') WHERE id=? AND tenant_id=?').bind(appt.price||0, appt.customer_id, t).run();
+    }
+    return json({ completed: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /appointments/:id/complete', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  return json({ completed: true });
 });
 
 // Mark no-show
 app.post('/appointments/:id/no-show', async (c) => {
-  const t = tid(c);
-  await c.env.DB.prepare("UPDATE appointments SET status='no_show',no_show_at=datetime('now'),updated_at=datetime('now') WHERE id=? AND tenant_id=?").bind(c.req.param('id'), t).run();
-  const appt = await c.env.DB.prepare('SELECT customer_id FROM appointments WHERE id=?').bind(c.req.param('id')).first() as any;
-  if (appt) {
-    await c.env.DB.prepare('UPDATE customers SET no_show_count=no_show_count+1,updated_at=datetime(\'now\') WHERE id=? AND tenant_id=?').bind(appt.customer_id, t).run();
+  try {
+    const t = tid(c);
+    await c.env.DB.prepare("UPDATE appointments SET status='no_show',no_show_at=datetime('now'),updated_at=datetime('now') WHERE id=? AND tenant_id=?").bind(c.req.param('id'), t).run();
+    const appt = await c.env.DB.prepare('SELECT customer_id FROM appointments WHERE id=?').bind(c.req.param('id')).first() as any;
+    if (appt) {
+      await c.env.DB.prepare('UPDATE customers SET no_show_count=no_show_count+1,updated_at=datetime(\'now\') WHERE id=? AND tenant_id=?').bind(appt.customer_id, t).run();
+    }
+    return json({ marked: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /appointments/:id/no-show', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  return json({ marked: true });
 });
 
 // Reschedule
 app.post('/appointments/:id/reschedule', async (c) => {
-  const t = tid(c); const b = sanitizeBody(await c.req.json());
-  const svc = await c.env.DB.prepare('SELECT s.duration_minutes FROM appointments a JOIN services s ON a.service_id=s.id WHERE a.id=? AND a.tenant_id=?').bind(c.req.param('id'), t).first() as any;
-  const endTime = (b.end_time as string) || addMinutes(b.start_time as string, svc?.duration_minutes||60);
-  await c.env.DB.prepare("UPDATE appointments SET date=?,start_time=?,end_time=?,staff_id=coalesce(?,staff_id),status='confirmed',updated_at=datetime('now') WHERE id=? AND tenant_id=?")
-    .bind(b.date, b.start_time, endTime, b.staff_id||null, c.req.param('id'), t).run();
-  await logAct(c.env.DB, t, 'appointment', c.req.param('id'), 'rescheduled', `Rescheduled to ${b.date} ${b.start_time}`);
-  return json({ rescheduled: true, end_time: endTime });
+  try {
+    const t = tid(c); const b = sanitizeBody(await c.req.json());
+    const svc = await c.env.DB.prepare('SELECT s.duration_minutes FROM appointments a JOIN services s ON a.service_id=s.id WHERE a.id=? AND a.tenant_id=?').bind(c.req.param('id'), t).first() as any;
+    const endTime = (b.end_time as string) || addMinutes(b.start_time as string, svc?.duration_minutes||60);
+    await c.env.DB.prepare("UPDATE appointments SET date=?,start_time=?,end_time=?,staff_id=coalesce(?,staff_id),status='confirmed',updated_at=datetime('now') WHERE id=? AND tenant_id=?")
+      .bind(b.date, b.start_time, endTime, b.staff_id||null, c.req.param('id'), t).run();
+    await logAct(c.env.DB, t, 'appointment', c.req.param('id'), 'rescheduled', `Rescheduled to ${b.date} ${b.start_time}`);
+    return json({ rescheduled: true, end_time: endTime });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /appointments/:id/reschedule', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ WAITLIST ═══════════════
 app.get('/waitlist', async (c) => {
-  const r = await c.env.DB.prepare("SELECT w.*, c.name as customer_name, s.name as service_name FROM waitlist w LEFT JOIN customers c ON w.customer_id=c.id LEFT JOIN services s ON w.service_id=s.id WHERE w.tenant_id=? AND w.status='waiting' ORDER BY w.created_at").bind(tid(c)).all();
-  return json(r.results);
+  try {
+    const r = await c.env.DB.prepare("SELECT w.*, c.name as customer_name, s.name as service_name FROM waitlist w LEFT JOIN customers c ON w.customer_id=c.id LEFT JOIN services s ON w.service_id=s.id WHERE w.tenant_id=? AND w.status='waiting' ORDER BY w.created_at").bind(tid(c)).all();
+    return json(r.results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /waitlist', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.post('/waitlist', async (c) => {
-  const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
-  await c.env.DB.prepare('INSERT INTO waitlist (id,tenant_id,customer_id,service_id,staff_id,preferred_date,preferred_time) VALUES (?,?,?,?,?,?,?)')
-    .bind(id, t, b.customer_id, b.service_id, b.staff_id||null, b.preferred_date||null, b.preferred_time||null).run();
-  return json({ id }, 201);
+  try {
+    const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
+    await c.env.DB.prepare('INSERT INTO waitlist (id,tenant_id,customer_id,service_id,staff_id,preferred_date,preferred_time) VALUES (?,?,?,?,?,?,?)')
+      .bind(id, t, b.customer_id, b.service_id, b.staff_id||null, b.preferred_date||null, b.preferred_time||null).run();
+    return json({ id }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /waitlist', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.delete('/waitlist/:id', async (c) => {
-  await c.env.DB.prepare('DELETE FROM waitlist WHERE id=? AND tenant_id=?').bind(c.req.param('id'), tid(c)).run();
-  return json({ removed: true });
+  try {
+    await c.env.DB.prepare('DELETE FROM waitlist WHERE id=? AND tenant_id=?').bind(c.req.param('id'), tid(c)).run();
+    return json({ removed: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'DELETE /waitlist/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ RECURRING SCHEDULES ═══════════════
 app.get('/recurring', async (c) => {
-  const r = await c.env.DB.prepare("SELECT r.*, c.name as customer_name, s.name as service_name, st.name as staff_name FROM recurring_schedules r LEFT JOIN customers c ON r.customer_id=c.id LEFT JOIN services s ON r.service_id=s.id LEFT JOIN staff st ON r.staff_id=st.id WHERE r.tenant_id=? AND r.status='active' ORDER BY r.day_of_week").bind(tid(c)).all();
-  return json(r.results);
+  try {
+    const r = await c.env.DB.prepare("SELECT r.*, c.name as customer_name, s.name as service_name, st.name as staff_name FROM recurring_schedules r LEFT JOIN customers c ON r.customer_id=c.id LEFT JOIN services s ON r.service_id=s.id LEFT JOIN staff st ON r.staff_id=st.id WHERE r.tenant_id=? AND r.status='active' ORDER BY r.day_of_week").bind(tid(c)).all();
+    return json(r.results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /recurring', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.post('/recurring', async (c) => {
-  const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
-  await c.env.DB.prepare('INSERT INTO recurring_schedules (id,tenant_id,customer_id,staff_id,service_id,location_id,day_of_week,start_time,frequency,interval_value,start_date,end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
-    .bind(id, t, b.customer_id, b.staff_id, b.service_id, b.location_id||null, b.day_of_week, b.start_time, b.frequency||'weekly', b.interval_value||1, b.start_date, b.end_date||null).run();
-  return json({ id }, 201);
+  try {
+    const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
+    await c.env.DB.prepare('INSERT INTO recurring_schedules (id,tenant_id,customer_id,staff_id,service_id,location_id,day_of_week,start_time,frequency,interval_value,start_date,end_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)')
+      .bind(id, t, b.customer_id, b.staff_id, b.service_id, b.location_id||null, b.day_of_week, b.start_time, b.frequency||'weekly', b.interval_value||1, b.start_date, b.end_date||null).run();
+    return json({ id }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /recurring', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.patch('/recurring/:id', async (c) => {
-  const b = sanitizeBody(await c.req.json());
-  await c.env.DB.prepare('UPDATE recurring_schedules SET status=coalesce(?,status),end_date=coalesce(?,end_date) WHERE id=? AND tenant_id=?')
-    .bind(b.status||null, b.end_date||null, c.req.param('id'), tid(c)).run();
-  return json({ updated: true });
+  try {
+    const b = sanitizeBody(await c.req.json());
+    await c.env.DB.prepare('UPDATE recurring_schedules SET status=coalesce(?,status),end_date=coalesce(?,end_date) WHERE id=? AND tenant_id=?')
+      .bind(b.status||null, b.end_date||null, c.req.param('id'), tid(c)).run();
+    return json({ updated: true });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'PATCH /recurring/:id', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ REVIEWS ═══════════════
 app.get('/reviews', async (c) => {
-  const t = tid(c); const staffId = c.req.query('staff_id');
-  let q = 'SELECT r.*, c.name as customer_name, s.name as staff_name FROM reviews r LEFT JOIN customers c ON r.customer_id=c.id LEFT JOIN staff s ON r.staff_id=s.id WHERE r.tenant_id=?'; const p: string[] = [t];
-  if (staffId) { q += ' AND r.staff_id=?'; p.push(staffId); }
-  q += ' ORDER BY r.created_at DESC LIMIT 100';
-  return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  try {
+    const t = tid(c); const staffId = c.req.query('staff_id');
+    let q = 'SELECT r.*, c.name as customer_name, s.name as staff_name FROM reviews r LEFT JOIN customers c ON r.customer_id=c.id LEFT JOIN staff s ON r.staff_id=s.id WHERE r.tenant_id=?'; const p: string[] = [t];
+    if (staffId) { q += ' AND r.staff_id=?'; p.push(staffId); }
+    q += ' ORDER BY r.created_at DESC LIMIT 100';
+    return json((await c.env.DB.prepare(q).bind(...p).all()).results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /reviews', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 app.post('/reviews', async (c) => {
-  const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
-  const appt = await c.env.DB.prepare('SELECT staff_id FROM appointments WHERE id=? AND tenant_id=?').bind(b.appointment_id, t).first() as any;
-  if (!appt) return json({ error: 'Appointment not found' }, 404);
-  await c.env.DB.prepare('INSERT INTO reviews (id,tenant_id,appointment_id,customer_id,staff_id,rating,comment) VALUES (?,?,?,?,?,?,?)')
-    .bind(id, t, b.appointment_id, b.customer_id, appt.staff_id, b.rating, b.comment||null).run();
-  return json({ id }, 201);
+  try {
+    const t = tid(c); const b = sanitizeBody(await c.req.json()); const id = uid();
+    const appt = await c.env.DB.prepare('SELECT staff_id FROM appointments WHERE id=? AND tenant_id=?').bind(b.appointment_id, t).first() as any;
+    if (!appt) return json({ error: 'Appointment not found' }, 404);
+    await c.env.DB.prepare('INSERT INTO reviews (id,tenant_id,appointment_id,customer_id,staff_id,rating,comment) VALUES (?,?,?,?,?,?,?)')
+      .bind(id, t, b.appointment_id, b.customer_id, appt.staff_id, b.rating, b.comment||null).run();
+    return json({ id }, 201);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /reviews', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ AI FEATURES ═══════════════
 app.post('/ai/no-show-risk', async (c) => {
-  const t = tid(c); const b = await c.req.json() as { customer_id: string };
-  const cust = await c.env.DB.prepare('SELECT * FROM customers WHERE id=? AND tenant_id=?').bind(b.customer_id, t).first() as any;
-  if (!cust) return json({ error: 'Customer not found' }, 404);
-  const history = await c.env.DB.prepare("SELECT date, status, start_time FROM appointments WHERE customer_id=? AND tenant_id=? ORDER BY date DESC LIMIT 20").bind(b.customer_id, t).all();
   try {
+    const t = tid(c); const b = await c.req.json() as { customer_id: string };
+    const cust = await c.env.DB.prepare('SELECT * FROM customers WHERE id=? AND tenant_id=?').bind(b.customer_id, t).first() as any;
+    if (!cust) return json({ error: 'Customer not found' }, 404);
+    const history = await c.env.DB.prepare("SELECT date, status, start_time FROM appointments WHERE customer_id=? AND tenant_id=? ORDER BY date DESC LIMIT 20").bind(b.customer_id, t).all();
+    try {
     const aiRes = await c.env.ENGINE_RUNTIME.fetch('https://engine/query', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ engine_id: 'FN-01', query: `Analyze no-show risk for customer: ${cust.name}. Total bookings: ${cust.total_bookings}. No-shows: ${cust.no_show_count}. No-show rate: ${cust.total_bookings > 0 ? ((cust.no_show_count/cust.total_bookings)*100).toFixed(1) : 0}%. Recent appointments: ${JSON.stringify(history.results?.slice(0,10))}. Predict no-show probability and recommend: require deposit, send extra reminders, or no action needed.` }),
@@ -411,91 +592,120 @@ app.post('/ai/no-show-risk', async (c) => {
     const ai = await aiRes.json() as any;
     return json({ customer: cust.name, no_show_rate: cust.total_bookings > 0 ? (cust.no_show_count/cust.total_bookings*100).toFixed(1) : 0, analysis: ai.response || ai });
   } catch { return json({ customer: cust.name, no_show_rate: cust.total_bookings > 0 ? (cust.no_show_count/cust.total_bookings*100).toFixed(1)+'%' : 'N/A', analysis: 'AI unavailable' }); }
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /ai/no-show-risk', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.post('/ai/scheduling-insights', async (c) => {
-  const t = tid(c);
-  const [byDay, byHour, noShows, utilization] = await Promise.all([
-    c.env.DB.prepare("SELECT strftime('%w', date) as day, COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND date>=date('now','-90 days') GROUP BY day ORDER BY day").bind(t).all(),
-    c.env.DB.prepare("SELECT substr(start_time,1,2) as hour, COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND date>=date('now','-90 days') GROUP BY hour ORDER BY hour").bind(t).all(),
-    c.env.DB.prepare("SELECT COUNT(CASE WHEN status='no_show' THEN 1 END)*100.0/COUNT(*) as rate FROM appointments WHERE tenant_id=? AND date>=date('now','-90 days')").bind(t).first(),
-    c.env.DB.prepare("SELECT COUNT(*) as total FROM appointments WHERE tenant_id=? AND date>=date('now','-30 days') AND status='completed'").bind(t).first(),
-  ]);
   try {
-    const aiRes = await c.env.ENGINE_RUNTIME.fetch('https://engine/query', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ engine_id: 'FN-01', query: `Analyze scheduling patterns. Bookings by day of week: ${JSON.stringify(byDay.results)}. By hour: ${JSON.stringify(byHour.results)}. No-show rate: ${(noShows as any)?.rate?.toFixed(1) || 0}%. Monthly completions: ${(utilization as any)?.total || 0}. Suggest: optimal hours, staffing adjustments, overbooking strategy, and demand forecasting.` }),
-    });
-    const ai = await aiRes.json() as any;
-    return json({ by_day: byDay.results, by_hour: byHour.results, no_show_rate: (noShows as any)?.rate, insights: ai.response || ai });
-  } catch { return json({ by_day: byDay.results, by_hour: byHour.results, no_show_rate: (noShows as any)?.rate, insights: 'AI unavailable' }); }
+    const t = tid(c);
+    const [byDay, byHour, noShows, utilization] = await Promise.all([
+      c.env.DB.prepare("SELECT strftime('%w', date) as day, COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND date>=date('now','-90 days') GROUP BY day ORDER BY day").bind(t).all(),
+      c.env.DB.prepare("SELECT substr(start_time,1,2) as hour, COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND date>=date('now','-90 days') GROUP BY hour ORDER BY hour").bind(t).all(),
+      c.env.DB.prepare("SELECT COUNT(CASE WHEN status='no_show' THEN 1 END)*100.0/COUNT(*) as rate FROM appointments WHERE tenant_id=? AND date>=date('now','-90 days')").bind(t).first(),
+      c.env.DB.prepare("SELECT COUNT(*) as total FROM appointments WHERE tenant_id=? AND date>=date('now','-30 days') AND status='completed'").bind(t).first(),
+    ]);
+    try {
+      const aiRes = await c.env.ENGINE_RUNTIME.fetch('https://engine/query', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ engine_id: 'FN-01', query: `Analyze scheduling patterns. Bookings by day of week: ${JSON.stringify(byDay.results)}. By hour: ${JSON.stringify(byHour.results)}. No-show rate: ${(noShows as any)?.rate?.toFixed(1) || 0}%. Monthly completions: ${(utilization as any)?.total || 0}. Suggest: optimal hours, staffing adjustments, overbooking strategy, and demand forecasting.` }),
+      });
+      const ai = await aiRes.json() as any;
+      return json({ by_day: byDay.results, by_hour: byHour.results, no_show_rate: (noShows as any)?.rate, insights: ai.response || ai });
+    } catch { return json({ by_day: byDay.results, by_hour: byHour.results, no_show_rate: (noShows as any)?.rate, insights: 'AI unavailable' }); }
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'POST /ai/scheduling-insights', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ ANALYTICS ═══════════════
 app.get('/analytics/overview', async (c) => {
-  const t = tid(c);
-  const [today, week, month, revenue, noShows, topServices, topStaff] = await Promise.all([
-    c.env.DB.prepare("SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND date=date('now') AND status NOT IN ('cancelled')").bind(t).first(),
-    c.env.DB.prepare("SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND date>=date('now','weekday 0','-7 days') AND date<=date('now') AND status NOT IN ('cancelled')").bind(t).first(),
-    c.env.DB.prepare("SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND date>=date('now','-30 days') AND status NOT IN ('cancelled')").bind(t).first(),
-    c.env.DB.prepare("SELECT SUM(price) as sum FROM appointments WHERE tenant_id=? AND status='completed' AND date>=date('now','-30 days')").bind(t).first(),
-    c.env.DB.prepare("SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND status='no_show' AND date>=date('now','-30 days')").bind(t).first(),
-    c.env.DB.prepare("SELECT s.name, COUNT(*) as cnt FROM appointments a JOIN services s ON a.service_id=s.id WHERE a.tenant_id=? AND a.date>=date('now','-30 days') AND a.status NOT IN ('cancelled') GROUP BY a.service_id ORDER BY cnt DESC LIMIT 5").bind(t).all(),
-    c.env.DB.prepare("SELECT st.name, COUNT(*) as cnt, AVG(r.rating) as avg_rating FROM appointments a JOIN staff st ON a.staff_id=st.id LEFT JOIN reviews r ON r.staff_id=st.id AND r.tenant_id=a.tenant_id WHERE a.tenant_id=? AND a.date>=date('now','-30 days') AND a.status='completed' GROUP BY a.staff_id ORDER BY cnt DESC LIMIT 5").bind(t).all(),
-  ]);
-  return json({
-    today: (today as any)?.cnt || 0,
-    this_week: (week as any)?.cnt || 0,
-    this_month: (month as any)?.cnt || 0,
-    revenue_30d: (revenue as any)?.sum || 0,
-    no_shows_30d: (noShows as any)?.cnt || 0,
-    top_services: topServices.results,
-    top_staff: topStaff.results,
-  });
+  try {
+    const t = tid(c);
+    const [today, week, month, revenue, noShows, topServices, topStaff] = await Promise.all([
+      c.env.DB.prepare("SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND date=date('now') AND status NOT IN ('cancelled')").bind(t).first(),
+      c.env.DB.prepare("SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND date>=date('now','weekday 0','-7 days') AND date<=date('now') AND status NOT IN ('cancelled')").bind(t).first(),
+      c.env.DB.prepare("SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND date>=date('now','-30 days') AND status NOT IN ('cancelled')").bind(t).first(),
+      c.env.DB.prepare("SELECT SUM(price) as sum FROM appointments WHERE tenant_id=? AND status='completed' AND date>=date('now','-30 days')").bind(t).first(),
+      c.env.DB.prepare("SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND status='no_show' AND date>=date('now','-30 days')").bind(t).first(),
+      c.env.DB.prepare("SELECT s.name, COUNT(*) as cnt FROM appointments a JOIN services s ON a.service_id=s.id WHERE a.tenant_id=? AND a.date>=date('now','-30 days') AND a.status NOT IN ('cancelled') GROUP BY a.service_id ORDER BY cnt DESC LIMIT 5").bind(t).all(),
+      c.env.DB.prepare("SELECT st.name, COUNT(*) as cnt, AVG(r.rating) as avg_rating FROM appointments a JOIN staff st ON a.staff_id=st.id LEFT JOIN reviews r ON r.staff_id=st.id AND r.tenant_id=a.tenant_id WHERE a.tenant_id=? AND a.date>=date('now','-30 days') AND a.status='completed' GROUP BY a.staff_id ORDER BY cnt DESC LIMIT 5").bind(t).all(),
+    ]);
+    return json({
+      today: (today as any)?.cnt || 0,
+      this_week: (week as any)?.cnt || 0,
+      this_month: (month as any)?.cnt || 0,
+      revenue_30d: (revenue as any)?.sum || 0,
+      no_shows_30d: (noShows as any)?.cnt || 0,
+      top_services: topServices.results,
+      top_staff: topStaff.results,
+    });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /analytics/overview', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 app.get('/analytics/daily', async (c) => {
-  const t = tid(c); const from = c.req.query('from') || new Date(Date.now()-30*86400000).toISOString().split('T')[0];
-  const r = await c.env.DB.prepare("SELECT date, COUNT(*) as bookings, SUM(CASE WHEN status='completed' THEN price ELSE 0 END) as revenue, SUM(CASE WHEN status='no_show' THEN 1 ELSE 0 END) as no_shows, SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) as cancellations FROM appointments WHERE tenant_id=? AND date>=? GROUP BY date ORDER BY date").bind(t, from).all();
-  return json(r.results);
+  try {
+    const t = tid(c); const from = c.req.query('from') || new Date(Date.now()-30*86400000).toISOString().split('T')[0];
+    const r = await c.env.DB.prepare("SELECT date, COUNT(*) as bookings, SUM(CASE WHEN status='completed' THEN price ELSE 0 END) as revenue, SUM(CASE WHEN status='no_show' THEN 1 ELSE 0 END) as no_shows, SUM(CASE WHEN status='cancelled' THEN 1 ELSE 0 END) as cancellations FROM appointments WHERE tenant_id=? AND date>=? GROUP BY date ORDER BY date").bind(t, from).all();
+    return json(r.results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /analytics/daily', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ ACTIVITY LOG ═══════════════
 app.get('/activity', async (c) => {
-  const r = await c.env.DB.prepare('SELECT * FROM activity_log WHERE tenant_id=? ORDER BY created_at DESC LIMIT 100').bind(tid(c)).all();
-  return json(r.results);
+  try {
+    const r = await c.env.DB.prepare('SELECT * FROM activity_log WHERE tenant_id=? ORDER BY created_at DESC LIMIT 100').bind(tid(c)).all();
+    return json(r.results);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /activity', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
+  }
 });
 
 // ═══════════════ CRON: REMINDERS + RECURRING ═══════════════
 app.get('/__cron', async (c) => {
-  const results: string[] = [];
-  // Mark past unconfirmed as no-show
-  const noShows = await c.env.DB.prepare("UPDATE appointments SET status='no_show',no_show_at=datetime('now') WHERE status='confirmed' AND date<date('now') AND end_time<time('now')").run();
-  results.push(`Marked ${noShows.meta.changes} past appointments as no-show`);
+  try {
+    const results: string[] = [];
+    // Mark past unconfirmed as no-show
+    const noShows = await c.env.DB.prepare("UPDATE appointments SET status='no_show',no_show_at=datetime('now') WHERE status='confirmed' AND date<date('now') AND end_time<time('now')").run();
+    results.push(`Marked ${noShows.meta.changes} past appointments as no-show`);
 
-  // Generate recurring appointments for next 2 weeks
-  const recs = await c.env.DB.prepare("SELECT * FROM recurring_schedules WHERE status='active'").all();
-  for (const rec of recs.results as any[]) {
-    const svc = await c.env.DB.prepare('SELECT duration_minutes FROM services WHERE id=?').bind(rec.service_id).first() as any;
-    const endTime = addMinutes(rec.start_time, svc?.duration_minutes || 60);
-    // Check next 14 days for matching day_of_week
-    for (let d = 0; d < 14; d++) {
-      const date = new Date(Date.now() + d * 86400000);
-      if (date.getDay() !== rec.day_of_week) continue;
-      const dateStr = date.toISOString().split('T')[0];
-      if (dateStr < rec.start_date) continue;
-      if (rec.end_date && dateStr > rec.end_date) continue;
-      // Check if already exists
-      const exists = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND customer_id=? AND service_id=? AND date=? AND recurring_id=?").bind(rec.tenant_id, rec.customer_id, rec.service_id, dateStr, rec.id).first() as any;
-      if (exists?.cnt > 0) continue;
-      const id = uid();
-      await c.env.DB.prepare("INSERT INTO appointments (id,tenant_id,customer_id,staff_id,service_id,location_id,status,start_time,end_time,date,is_recurring,recurring_id,source) VALUES (?,?,?,?,?,?,'confirmed',?,?,?,1,?,'recurring')")
-        .bind(id, rec.tenant_id, rec.customer_id, rec.staff_id, rec.service_id, rec.location_id||null, rec.start_time, endTime, dateStr, rec.id).run();
-      await c.env.DB.prepare('UPDATE recurring_schedules SET appointments_created=appointments_created+1 WHERE id=?').bind(rec.id).run();
-      results.push(`Created recurring appointment for ${dateStr}`);
+    // Generate recurring appointments for next 2 weeks
+    const recs = await c.env.DB.prepare("SELECT * FROM recurring_schedules WHERE status='active'").all();
+    for (const rec of recs.results as any[]) {
+      const svc = await c.env.DB.prepare('SELECT duration_minutes FROM services WHERE id=?').bind(rec.service_id).first() as any;
+      const endTime = addMinutes(rec.start_time, svc?.duration_minutes || 60);
+      // Check next 14 days for matching day_of_week
+      for (let d = 0; d < 14; d++) {
+        const date = new Date(Date.now() + d * 86400000);
+        if (date.getDay() !== rec.day_of_week) continue;
+        const dateStr = date.toISOString().split('T')[0];
+        if (dateStr < rec.start_date) continue;
+        if (rec.end_date && dateStr > rec.end_date) continue;
+        // Check if already exists
+        const exists = await c.env.DB.prepare("SELECT COUNT(*) as cnt FROM appointments WHERE tenant_id=? AND customer_id=? AND service_id=? AND date=? AND recurring_id=?").bind(rec.tenant_id, rec.customer_id, rec.service_id, dateStr, rec.id).first() as any;
+        if (exists?.cnt > 0) continue;
+        const id = uid();
+        await c.env.DB.prepare("INSERT INTO appointments (id,tenant_id,customer_id,staff_id,service_id,location_id,status,start_time,end_time,date,is_recurring,recurring_id,source) VALUES (?,?,?,?,?,?,'confirmed',?,?,?,1,?,'recurring')")
+          .bind(id, rec.tenant_id, rec.customer_id, rec.staff_id, rec.service_id, rec.location_id||null, rec.start_time, endTime, dateStr, rec.id).run();
+        await c.env.DB.prepare('UPDATE recurring_schedules SET appointments_created=appointments_created+1 WHERE id=?').bind(rec.id).run();
+        results.push(`Created recurring appointment for ${dateStr}`);
+      }
     }
+    return json({ cron: 'complete', results });
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: 'error', worker: 'echo-booking', message: 'D1 query failed', endpoint: 'GET /__cron', error: e?.message }));
+    return c.json({ error: 'Database error' }, 500);
   }
-  return json({ cron: 'complete', results });
 });
 
 // ── Helpers ──
