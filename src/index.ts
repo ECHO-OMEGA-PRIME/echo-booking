@@ -20,7 +20,7 @@ app.use('*', async (c, next) => {
   c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
 });
-app.use('*', cors({ origin: '*', allowMethods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'], allowHeaders: ['Content-Type','Authorization','X-Tenant-ID','X-Echo-API-Key'] }));
+app.use('*', cors({ origin: ['https://echo-ept.com','https://www.echo-ept.com','https://echo-op.com','https://www.echo-op.com','http://localhost:3000','http://localhost:3001'], allowMethods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'], allowHeaders: ['Content-Type','Authorization','X-Tenant-ID','X-Echo-API-Key'] }));
 
 const uid = () => crypto.randomUUID();
 const sanitize = (s: string, max = 2000) => s?.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '').slice(0, max) ?? '';
@@ -397,11 +397,6 @@ app.post('/appointments', async (c) => {
     // Get service for duration
     const svc = await c.env.DB.prepare('SELECT * FROM services WHERE id=? AND tenant_id=?').bind(b.service_id, t).first() as any;
     const endTime = (b.end_time as string) || addMinutes(b.start_time as string, svc?.duration_minutes || 60);
-    // Double-booking protection: check for overlapping appointments on the same staff
-    const overlap = await c.env.DB.prepare(
-      "SELECT id FROM appointments WHERE staff_id = ? AND date = ? AND status NOT IN ('cancelled','no-show') AND ((start_time < ? AND end_time > ?) OR (start_time < ? AND end_time > ?))"
-    ).bind(b.staff_id, b.date, endTime, b.start_time, b.start_time, endTime).first();
-    if (overlap) return c.json({ error: 'Time slot already booked' }, 409);
     // Max daily bookings enforcement
     const tenant = await c.env.DB.prepare("SELECT max_daily_bookings FROM tenants WHERE id = ?").bind(t).first();
     if (tenant?.max_daily_bookings) {
@@ -411,8 +406,17 @@ app.post('/appointments', async (c) => {
       if ((dayCount as any)?.cnt >= tenant.max_daily_bookings) return c.json({ error: 'Daily booking limit reached' }, 429);
     }
     const status = b.status || 'confirmed';
-    await c.env.DB.prepare('INSERT INTO appointments (id,tenant_id,customer_id,staff_id,service_id,location_id,status,start_time,end_time,date,price,notes,customer_notes,internal_notes,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .bind(id, t, b.customer_id, b.staff_id, b.service_id, b.location_id||null, status, b.start_time, endTime, b.date, b.price||svc?.price||0, b.notes||null, b.customer_notes||null, b.internal_notes||null, b.source||'manual').run();
+    // Atomic double-booking protection: INSERT only if no overlapping appointment exists
+    const insertResult = await c.env.DB.prepare(
+      `INSERT INTO appointments (id,tenant_id,customer_id,staff_id,service_id,location_id,status,start_time,end_time,date,price,notes,customer_notes,internal_notes,source)
+       SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM appointments WHERE staff_id = ? AND date = ? AND status NOT IN ('cancelled','no-show')
+         AND start_time < ? AND end_time > ?
+       )`
+    ).bind(id, t, b.customer_id, b.staff_id, b.service_id, b.location_id||null, status, b.start_time, endTime, b.date, b.price||svc?.price||0, b.notes||null, b.customer_notes||null, b.internal_notes||null, b.source||'manual',
+      b.staff_id, b.date, endTime, b.start_time).run();
+    if (!insertResult.meta.changes) return c.json({ error: 'Time slot already booked' }, 409);
     // Update customer stats
     await c.env.DB.prepare('UPDATE customers SET total_bookings=total_bookings+1,updated_at=datetime(\'now\') WHERE id=? AND tenant_id=?').bind(b.customer_id, t).run();
     await logAct(c.env.DB, t, 'appointment', id, 'booked', `Appointment booked for ${b.date} ${b.start_time}`);
